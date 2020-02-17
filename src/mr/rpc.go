@@ -6,18 +6,26 @@ package mr
 // remember to capitalize all names.
 //
 
-//
-// example to show how to declare the arguments
-// and reply for an RPC.
-//
-
-type ExampleArgs struct {
-	X int
+// Adding the Worker args and reply struct for RPC
+type TaskRequest struct {
+	// what does the worker need to tell Master?
+	// that I am available? that should be obvious because it is calling!
+	// maybe nothing for now?
 }
 
-type ExampleReply struct {
-	Y int
+type TaskResponse struct {
+	// What does the Master need to reply back with?
+	FileName   string
+	TaskType   string 		// MapTask/ReduceTask
+	TaskId     int
+	NReduce    int
+	MDoneTasks int
 }
 
-// Add your RPC definitions here.
+type SignalMapReq struct {
+	FileName string
+}
 
+type SignalMapRes struct {
+	Ok bool
+}
