@@ -153,7 +153,6 @@ func ExecuteReduceTask(reducef reduceFunc, reduceTaskId int, totalMapTasks int) 
 		file, err := os.Open(fileName)
 		defer file.Close()
 		if err != nil {
-			log.Fatalf("cannot open %v", fileName)
 			return err
 		}
 		dec := json.NewDecoder(file)

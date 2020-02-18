@@ -98,11 +98,8 @@ func (m *Master) server() {
 //
 func (m *Master) Done() bool {
 	ret := false
-
-	// Your code here.
 	m.mux.Lock()
 	if m.NReduce == m.RAssigned {
-		// TODO: This needs improvement
 		ret = true
 		log.Println("Done, job finished!")
 	}
