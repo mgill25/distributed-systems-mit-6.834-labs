@@ -43,13 +43,16 @@ type reduceFunc func(string, []string) string
 //
 func Worker(mapf mapperFunc, reducef reduceFunc) {
 	// Repeatedly call the Master via RPC and ask for new tasks
-	var close string
 	for {
 		// what happens when a worker has successfully finished a task?
 		// it should ping the master and ask for any next available task.
-		close = CallMaster(mapf, reducef)
-		if close == "close" {
+		rv := CallMaster(mapf, reducef)
+		if rv == "close" {
 			break
+		} else if rv == "retry" {
+			log.Println("Retry after a second...")
+			time.Sleep(1 * time.Second)
+			continue
 		}
 		time.Sleep(1 * time.Second)
 	}
@@ -65,8 +68,9 @@ func CallMaster(mapf mapperFunc, reducef reduceFunc) string {
 	req := TaskRequest{}
 	res := TaskResponse{}
 	call("Master.GetTask", &req, &res)
-	if res.TaskType == "" {
-		return ""
+	if res.TaskType == "wait" {
+		// master is asking worker to wait
+		return "retry"
 	}
 
 	// log.Println(fmt.Sprintf("Got a %v Task[%v], Filename = %v\n", res.TaskType, res.TaskId, res.FileName))
@@ -77,15 +81,18 @@ func CallMaster(mapf mapperFunc, reducef reduceFunc) string {
 		if err != nil {
 			log.Println("Error during map execution = ", err)
 		}
-		mreq := SignalMapReq{res.FileName}
-		mres := SignalMapRes{}
-		call("Master.SignalMapDone", &mreq, &mres)
+		mreq := DoneReq{res.FileName, res.TaskId, "Map"}
+		mres := DoneRes{}
+		call("Master.MarkDone", &mreq, &mres)
 	} else if res.TaskType == "ReduceTask" {
 		log.Println("Executing the reduce task", res.TaskId)
 		err := ExecuteReduceTask(reducef, res.TaskId, res.MDoneTasks)
 		if err != nil {
 			log.Println("Error during reduce execution = ", err)
 		}
+		mreq := DoneReq{res.FileName, res.TaskId, "Reduce"}
+		mres := DoneRes{}
+		call("Master.MarkDone", &mreq, &mres)
 	} else if res.TaskType == "CloseWorker" {
 		return "close"
 	}

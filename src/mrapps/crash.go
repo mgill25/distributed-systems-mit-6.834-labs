@@ -16,15 +16,18 @@ import "os"
 import "sort"
 import "strconv"
 import "time"
+// import "fmt"
 
-func maybeCrash() {
+func maybeCrash(filename string) {
 	max := big.NewInt(1000)
 	rr, _ := crand.Int(crand.Reader, max)
 	if rr.Int64() < 330 {
 		// crash!
+		// fmt.Println("crashing: ", filename)
 		os.Exit(1)
 	} else if rr.Int64() < 660 {
 		// delay for a while.
+		// fmt.Println("delaying: ", filename)
 		maxms := big.NewInt(10 * 1000)
 		ms, _ := crand.Int(crand.Reader, maxms)
 		time.Sleep(time.Duration(ms.Int64()) * time.Millisecond)
@@ -32,7 +35,7 @@ func maybeCrash() {
 }
 
 func Map(filename string, contents string) []mr.KeyValue {
-	maybeCrash()
+	maybeCrash(filename)
 
 	kva := []mr.KeyValue{}
 	kva = append(kva, mr.KeyValue{"a", filename})
@@ -43,7 +46,7 @@ func Map(filename string, contents string) []mr.KeyValue {
 }
 
 func Reduce(key string, values []string) string {
-	maybeCrash()
+	maybeCrash("")
 
 	// sort values to ensure deterministic output.
 	vv := make([]string, len(values))

@@ -22,10 +22,12 @@ type TaskResponse struct {
 	MDoneTasks int
 }
 
-type SignalMapReq struct {
+type DoneReq struct {
 	FileName string
+	TaskId   int
+	TaskType string
 }
 
-type SignalMapRes struct {
+type DoneRes struct {
 	Ok bool
 }
