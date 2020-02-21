@@ -42,55 +42,61 @@ type reduceFunc func(string, []string) string
 // main/mrworker.go calls this function.
 //
 func Worker(mapf mapperFunc, reducef reduceFunc) {
+	// Repeatedly call the Master via RPC and ask for new tasks
 	for {
-		// log.Println("[WORKER] Requesting new task...")
-		res := GetNewTask()
-		if res.Msg == "quit" {
-			log.Println("[WORKER] Quitting...")
+		// what happens when a worker has successfully finished a task?
+		// it should ping the master and ask for any next available task.
+		rv := CallMaster(mapf, reducef)
+		if rv == "close" {
 			break
-		} else if res.Msg == "map_task" {
-			HandleMap(&res, mapf)
-		} else if res.Msg == "reduce_task" {
-			HandleReduce(&res, reducef)
-		} else {
-			log.Println("Do nothing. Call again")
+		} else if rv == "retry" {
+			log.Println("Retry after a second...")
+			time.Sleep(1 * time.Second)
+			continue
 		}
 		time.Sleep(1 * time.Second)
 	}
 }
 
-func GetNewTask() TaskResponse {
+// This function calls the Master server via RPC
+func CallMaster(mapf mapperFunc, reducef reduceFunc) string {
+	// Worker has a few jobs that happen within this
+	// 1. RPC call to master. Master replies with an input file name and a task number
+	// 2. Tasks can also be of 2 types: Map Task or Reduce Task.
+	// 3. Worker should process the task as per the spec (different for Map and Reduce)
+	// 4. After executing the task, worker should signal to master
 	req := TaskRequest{}
 	res := TaskResponse{}
 	call("Master.GetTask", &req, &res)
-	return res
-}
+	if res.TaskType == "wait" {
+		// master is asking worker to wait
+		return "retry"
+	}
 
-func HandleMap(res *TaskResponse, mapf mapperFunc) {
-	if res.TaskType == "map" {
-		// log.Println("[WORKER] Executing the map task", res.TaskId)
+	// log.Println(fmt.Sprintf("Got a %v Task[%v], Filename = %v\n", res.TaskType, res.TaskId, res.FileName))
+
+	if res.TaskType == "MapTask" {
+		log.Println("Executing the map task", res.TaskId)
 		err := ExecuteMapTask(mapf, res.FileName, res.TaskId, res.NReduce)
 		if err != nil {
 			log.Println("Error during map execution = ", err)
 		}
-		mreq := DoneReq{res.FileName, res.TaskId, "map"}
+		mreq := DoneReq{res.FileName, res.TaskId, "Map"}
 		mres := DoneRes{}
-		// log.Println("[WORKER] RPC to mark map as done")
 		call("Master.MarkDone", &mreq, &mres)
-	}
-}
-
-func HandleReduce(res *TaskResponse, reducef reduceFunc) {
-	if res.TaskType == "reduce" {
-		// log.Println("[WORKER] Executing the reduce task", res.TaskId)
-		err := ExecuteReduceTask(reducef, res.TaskId, res.NumInputFiles)
+	} else if res.TaskType == "ReduceTask" {
+		log.Println("Executing the reduce task", res.TaskId)
+		err := ExecuteReduceTask(reducef, res.TaskId, res.MDoneTasks)
 		if err != nil {
 			log.Println("Error during reduce execution = ", err)
 		}
-		mreq := DoneReq{res.FileName, res.TaskId, "reduce"}
+		mreq := DoneReq{res.FileName, res.TaskId, "Reduce"}
 		mres := DoneRes{}
 		call("Master.MarkDone", &mreq, &mres)
+	} else if res.TaskType == "CloseWorker" {
+		return "close"
 	}
+	return ""
 }
 
 // Map executor
@@ -149,7 +155,6 @@ func writeIntermediateResult(fileName string, intermediateResult []KeyValue) {
 // Reduce executor
 func ExecuteReduceTask(reducef reduceFunc, reduceTaskId int, totalMapTasks int) error {
 	var intermediate []KeyValue
-	//log.Println("reduce = ", reduceTaskId, " total = ", totalMapTasks)
 	for i := 0; i < totalMapTasks; i++ {
 		fileName := fmt.Sprintf("mr-%v-%v", i, reduceTaskId)
 		file, err := os.Open(fileName)

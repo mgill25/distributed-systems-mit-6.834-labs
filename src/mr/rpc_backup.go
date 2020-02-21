@@ -15,12 +15,11 @@ type TaskRequest struct {
 
 type TaskResponse struct {
 	// What does the Master need to reply back with?
-	FileName      string
-	TaskType      string // MapTask/ReduceTask
-	TaskId        int
-	NReduce       int
-	NumInputFiles int
-	Msg           string
+	FileName   string
+	TaskType   string 		// MapTask/ReduceTask
+	TaskId     int
+	NReduce    int
+	MDoneTasks int
 }
 
 type DoneReq struct {

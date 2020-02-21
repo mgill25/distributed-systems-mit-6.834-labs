@@ -7,116 +7,169 @@ import "net/rpc"
 import "net/http"
 import "sync"
 import "time"
+import "fmt"
 
-type MapFileState struct {
-	FileName string
-	Status   string 				// possible values: awaiting, assigned, done
-	TaskId   int
+// BUG: reduce tasks are starting before map tasks have had a chance to finish
+// Problem hint: time.Sleep or sync.Cond
+
+type Task struct {
+	fileName string
+	status   string
 }
 
 // Global Data Structure
 type Master struct {
-	FileStates []MapFileState 		// name and status of input files (for map tasks)
-	NReduce    int 					// number: total number of reduce tasks to launch
-	MDoneTasks int 					// counter: total map tasks successfully done so far
-	MAssigned  int                  // counter: map tasks assigned to workers so far
-	RAssigned  int                  // counter: reduce tasks assigned to workes so far
-	TaskInfo   map[int]string       // map of every task id with its status
-	mux        sync.Mutex           // mutex for concurrency control
-
-	// Note: `MAssigned` and `RAssigned` are used as task ids which get assigned to workers,
-	// and are increased sequentially (assuming serial and not concurrent operations).
+	mux             sync.Mutex // mutex for concurrency control
+	map_tasks       []Task
+	reduce_tasks    []Task
+	map_done        bool
+	reduce_done     bool
+	map_assigned    bool
+	reduce_assigned bool
+	map_counter     int
+	reduce_counter  int
+	nReduce         int
+	numInputFiles   int
 }
 
-// Worker RPCs the Master on this endpoint to request for a new task
-/**
-
-The master should notice if a worker hasn't completed its task in a reasonable
-amount of time (for this lab, use ten seconds), and give the same task to a
-different worker.
-	- TODO: How can we achieve this?
-**/
-
-func (m *Master) launchMonitor(taskId int, fileName string) {
-	// lauch a monitor goroutine for this task
-	time.Sleep(10 * time.Second) 	// wait 10 seconds
+func (m *Master) launchMonitor(taskType string, taskId int) {
+	time.Sleep(10 * time.Second)
 	m.mux.Lock()
-	// if this task isn't marked as done after 10 seconds,
-	// we need to go in our master data structure, mark the task as "awaiting"
-	if m.TaskInfo[taskId] != "done" {
-		for i, fileState := range m.FileStates {
-			if fileState.FileName == fileName {
-				fileState.Status = "awaiting"
-				m.TaskInfo[taskId] = "awaiting"
-				m.FileStates[i] = fileState
-				m.MAssigned--
-				// log.Println(fmt.Sprintf("task %v re-marked as awaiting. MAssigned = %v", taskId, m.MAssigned))
-				break
-			}
+	if taskType == "map" {
+		if m.map_tasks[taskId].status != "done" {
+			log.Println("re-enqueuing a map task", taskId)
+			m.map_tasks[taskId].status = "awaiting"
+			m.map_assigned = false
+			m.map_done = false
+			m.map_counter--
+		}
+	} else if taskType == "reduce" {
+		if m.reduce_tasks[taskId].status != "done" {
+			log.Println("re-enqueuing a reduce task", taskId)
+			m.reduce_tasks[taskId].status = "awaiting"
+			m.reduce_assigned = false
+			m.reduce_done = false
+			m.reduce_counter--
 		}
 	}
-	// the next thing we need to do is assign this exact task (file) to 
-	// another worker. How can we achieve that?
 	m.mux.Unlock()
 }
 
-// well the worker is asking for the task, and it only asks for tasks that are marked not done.
-// so it should automatically ask for the awaiting tasks (which were marked awaiting by the 
-// monitoring thread!)
 func (m *Master) GetTask(req *TaskRequest, res *TaskResponse) error {
+	// time.Sleep(2 * time.Second)
 	m.mux.Lock()
-	if m.MDoneTasks < len(m.FileStates) && m.MAssigned == len(m.FileStates) {
-		log.Println("all tasks have been assigned to workers!")
-		log.Println("TaskInfo = ", m.TaskInfo)
-		res.TaskType = "wait"
+	if m.map_assigned && !m.map_done {
+		log.Println("map not done yet...")
+		m.sendWaitSignal(req, res)
 	}
-	if m.MDoneTasks == len(m.FileStates) && m.RAssigned < m.NReduce {
-		res.TaskType = "ReduceTask"
-		res.MDoneTasks = m.MDoneTasks
-		// keep track of all reduce tasks assigned
-		res.TaskId = m.RAssigned
-		go m.launchMonitor(res.TaskId, "")
-		m.RAssigned++
-		m.TaskInfo[res.TaskId] = "assigned"
-	} else if m.MDoneTasks < len(m.FileStates) {
-		item, fileStates := m.FileStates[0], m.FileStates[1:]
-		item.Status = "assigned"
-		fileStates = append(fileStates, item)
-		m.FileStates = fileStates
-		// Create the RPC response for the Map
-		res.FileName = item.FileName
-		res.TaskId  = m.MAssigned
-		res.NReduce = m.NReduce
-		res.TaskType = "MapTask"
-		go m.launchMonitor(res.TaskId, res.FileName)
-		m.MAssigned++
-		m.TaskInfo[res.TaskId] = "assigned"
+
+	if !m.map_assigned && !m.map_done {
+		m.assignToWorker("map", req, res)
+		go m.launchMonitor("map", m.map_counter)
+		if m.map_counter == m.numInputFiles-1 {
+			m.map_assigned = true
+		} else {
+			m.map_counter++
+		}
+		m.mux.Unlock()
+		return nil
+	} else if m.map_done && !m.reduce_assigned && !m.reduce_done {
+		m.assignToWorker("reduce", req, res)
+		go m.launchMonitor("reduce", m.reduce_counter)
+		if m.reduce_counter == m.nReduce-1 {
+			m.reduce_assigned = true
+		} else {
+			m.reduce_counter++
+		}
+		m.mux.Unlock()
+		return nil
+	}
+
+	if m.map_done && m.reduce_done {
+		m.sendQuitSignal(req, res)
 	} else {
-		// Map and Reduce have finished. Close the worker gracefully
-		res.TaskType = "CloseWorker"
+		m.sendWaitSignal(req, res)
 	}
 	m.mux.Unlock()
 	return nil
 }
 
+// Assign a task to the requesting worker
+func (m *Master) assignToWorker(taskType string, req *TaskRequest, res *TaskResponse) {
+	log.Println(fmt.Sprintf("[WORKER], Assigning taskType = %v", taskType))
+	// Create RPC response
+	// And then change the internal state to reflect current status
+	res.TaskType = taskType
+	res.NReduce = m.nReduce
+	if taskType == "map" {
+		res.FileName = m.map_tasks[m.map_counter].fileName
+		res.TaskId = m.map_counter
+		res.Msg = "map_task"
+		m.map_tasks[m.map_counter].status = "assigned"
+	} else if taskType == "reduce" {
+		// no filename needed for reduce
+		res.TaskId = m.reduce_counter
+		res.Msg = "reduce_task"
+		res.NumInputFiles = m.numInputFiles
+		m.reduce_tasks[m.reduce_counter].status = "assigned"
+	}
+}
+
+func (m *Master) sendQuitSignal(req *TaskRequest, res *TaskResponse) {
+	res.Msg = "quit"
+}
+
+func (m *Master) sendWaitSignal(req *TaskRequest, res *TaskResponse) {
+	res.Msg = "wait"
+}
+
+// are all map tasks done?
+func (m *Master) isMapDone() bool {
+	all_map_done := true
+	for i := range m.map_tasks {
+		if m.map_tasks[i].status == "done" {
+			all_map_done = all_map_done && true
+		} else {
+			all_map_done = all_map_done && false
+		}
+	}
+	return all_map_done
+}
+
+// are all reduce tasks done?
+func (m *Master) isReduceDone() bool {
+	all_reduce_done := true
+	for i := range m.reduce_tasks {
+		if m.reduce_tasks[i].status == "done" {
+			all_reduce_done = all_reduce_done && true
+		} else {
+			all_reduce_done = all_reduce_done && false
+		}
+	}
+	return all_reduce_done
+}
+
 // Mark this particular file as done
 func (m *Master) MarkDone(req *DoneReq, res *DoneRes) error {
 	m.mux.Lock()
-	if req.TaskType == "Map" {
-		for i, fileState := range m.FileStates {
-			if fileState.Status == "assigned" && m.MDoneTasks < len(m.FileStates) {
-				fileState.Status = "done"
-				m.FileStates[i] = fileState
-				m.MDoneTasks++
-				m.TaskInfo[req.TaskId] = "done"
-				res.Ok = true
-				break
-			}
+	taskType := req.TaskType
+	if taskType == "map" && !m.map_done {
+		log.Println(fmt.Sprintf("[MASTER] marking map task %v as done", req.TaskId))
+		m.map_tasks[req.TaskId].status = "done"
+		m.map_done = m.isMapDone()
+		if m.map_done {
+			log.Println("[MASTER] >>>>>>>>>>>>>>>>>> all map done")
 		}
-	} else if req.TaskType == "Reduce" {
-		// Only this for now, the rest seems to be working fine by itself.
-		m.TaskInfo[req.TaskId] = "done"
 	}
+	if taskType == "reduce" && !m.reduce_done {
+		log.Println(fmt.Sprintf("[MASTER] marking reduce task %v as done", req.TaskId))
+		m.reduce_tasks[req.TaskId].status = "done"
+		m.reduce_done = m.isReduceDone()
+		if m.reduce_done {
+			log.Println("[MASTER] >>>>>>>>>>>>>>>>>> all reduce done")
+		}
+	}
+	res.Ok = true
 	m.mux.Unlock()
 	return nil
 }
@@ -144,9 +197,8 @@ func (m *Master) server() {
 func (m *Master) Done() bool {
 	ret := false
 	m.mux.Lock()
-	if m.NReduce == m.RAssigned {
+	if m.map_done && m.reduce_done {
 		ret = true
-		log.Println("Done, job finished!")
 	}
 	m.mux.Unlock()
 	return ret
@@ -165,18 +217,34 @@ func MakeMaster(files []string, nReduce int) *Master {
 
 	m := Master{}
 
-	mfStates := []MapFileState{}
+	m.map_tasks = []Task{}
+	m.reduce_tasks = []Task{}
+	m.map_done = false
+	m.reduce_done = false
+	m.map_assigned = false
+	m.reduce_assigned = false
+	m.map_counter = 0
+	m.reduce_counter = 0
+	m.nReduce = nReduce
+	m.numInputFiles = len(files)
+
+	// initialize all map tasks
 	for _, file := range files {
-		mfState := MapFileState{
-			FileName: file,
-			Status:   "awaiting",
+		mapTask := Task{
+			fileName: file,
+			status:   "awaiting",
 		}
-		mfStates = append(mfStates, mfState)
+		m.map_tasks = append(m.map_tasks, mapTask)
 	}
 
-	m.FileStates = mfStates
-	m.NReduce = nReduce
-	m.TaskInfo = make(map[int]string)
+	// initialize all reduce tasks
+	for i := 0; i < nReduce; i++ {
+		reduceTask := Task{
+			status: "awaiting",
+		}
+		m.reduce_tasks = append(m.reduce_tasks, reduceTask)
+	}
+
 	m.server()
 	return &m
 }
