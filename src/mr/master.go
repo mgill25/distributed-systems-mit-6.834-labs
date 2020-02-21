@@ -65,22 +65,22 @@ func (m *Master) GetTask(req *TaskRequest, res *TaskResponse) error {
 
 	if !m.map_assigned && !m.map_done {
 		m.assignToWorker("map", req, res)
-		go m.launchMonitor("map", m.map_counter)
 		if m.map_counter == m.numInputFiles-1 {
 			m.map_assigned = true
 		} else {
 			m.map_counter++
 		}
+		go m.launchMonitor("map", m.map_counter)
 		m.mux.Unlock()
 		return nil
 	} else if m.map_done && !m.reduce_assigned && !m.reduce_done {
 		m.assignToWorker("reduce", req, res)
-		go m.launchMonitor("reduce", m.reduce_counter)
 		if m.reduce_counter == m.nReduce-1 {
 			m.reduce_assigned = true
 		} else {
 			m.reduce_counter++
 		}
+		go m.launchMonitor("reduce", m.reduce_counter)
 		m.mux.Unlock()
 		return nil
 	}
@@ -96,7 +96,6 @@ func (m *Master) GetTask(req *TaskRequest, res *TaskResponse) error {
 
 // Assign a task to the requesting worker
 func (m *Master) assignToWorker(taskType string, req *TaskRequest, res *TaskResponse) {
-	log.Println(fmt.Sprintf("[WORKER], Assigning taskType = %v", taskType))
 	// Create RPC response
 	// And then change the internal state to reflect current status
 	res.TaskType = taskType
@@ -154,16 +153,18 @@ func (m *Master) MarkDone(req *DoneReq, res *DoneRes) error {
 	m.mux.Lock()
 	taskType := req.TaskType
 	if taskType == "map" && !m.map_done {
-		log.Println(fmt.Sprintf("[MASTER] marking map task %v as done", req.TaskId))
 		m.map_tasks[req.TaskId].status = "done"
 		m.map_done = m.isMapDone()
+		log.Println(fmt.Sprintf("[MASTER] marked map task %v as done", req.TaskId))
+		log.Println("STATE:", m.map_tasks, "MAP COUNTER:", m.map_counter)
 		if m.map_done {
 			log.Println("[MASTER] >>>>>>>>>>>>>>>>>> all map done")
 		}
 	}
 	if taskType == "reduce" && !m.reduce_done {
-		log.Println(fmt.Sprintf("[MASTER] marking reduce task %v as done", req.TaskId))
 		m.reduce_tasks[req.TaskId].status = "done"
+		log.Println(fmt.Sprintf("[MASTER] marked reduce task %v as done", req.TaskId))
+		log.Println("STATE:", m.reduce_tasks)
 		m.reduce_done = m.isReduceDone()
 		if m.reduce_done {
 			log.Println("[MASTER] >>>>>>>>>>>>>>>>>> all reduce done")
