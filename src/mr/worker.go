@@ -43,7 +43,7 @@ type reduceFunc func(string, []string) string
 //
 func Worker(mapf mapperFunc, reducef reduceFunc) {
 	for {
-		// log.Println("[WORKER] Requesting new task...")
+		log.Println("[WORKER] Requesting new task...")
 		res := GetNewTask()
 		if res.Msg == "quit" {
 			log.Println("[WORKER] Quitting...")
@@ -68,7 +68,7 @@ func GetNewTask() TaskResponse {
 
 func HandleMap(res *TaskResponse, mapf mapperFunc) {
 	if res.TaskType == "map" {
-		// log.Println("[WORKER] Executing the map task", res.TaskId)
+		log.Println("[WORKER] Executing the map task", res.TaskId)
 		err := ExecuteMapTask(mapf, res.FileName, res.TaskId, res.NReduce)
 		if err != nil {
 			log.Println("Error during map execution = ", err)
@@ -82,13 +82,14 @@ func HandleMap(res *TaskResponse, mapf mapperFunc) {
 
 func HandleReduce(res *TaskResponse, reducef reduceFunc) {
 	if res.TaskType == "reduce" {
-		// log.Println("[WORKER] Executing the reduce task", res.TaskId)
+		log.Println("[WORKER] Executing the reduce task", res.TaskId)
 		err := ExecuteReduceTask(reducef, res.TaskId, res.NumInputFiles)
 		if err != nil {
 			log.Println("Error during reduce execution = ", err)
 		}
 		mreq := DoneReq{res.FileName, res.TaskId, "reduce"}
 		mres := DoneRes{}
+		// log.Println("[WORKER] RPC to mark reduce as done")
 		call("Master.MarkDone", &mreq, &mres)
 	}
 }
@@ -98,12 +99,12 @@ func ExecuteMapTask(mapf mapperFunc, fileName string, mapTaskId int, nReduce int
 	intermediate := []KeyValue{}
 	file, err := os.Open(fileName)
 	if err != nil {
-		log.Fatalf("cannot open %v", fileName)
+		log.Fatalf(fmt.Sprintf("cannot open %v", fileName))
 		return err
 	}
 	content, err := ioutil.ReadAll(file)
 	if err != nil {
-		log.Fatalf("cannot read %v", fileName)
+		log.Fatalf(fmt.Sprintf("cannot open %v", fileName))
 		return err
 	}
 	file.Close()
@@ -134,7 +135,7 @@ func ExecuteMapTask(mapf mapperFunc, fileName string, mapTaskId int, nReduce int
 func writeIntermediateResult(fileName string, intermediateResult []KeyValue) {
 	file, err := os.Create(fileName)
 	if err != nil {
-		log.Fatalf("cannot open %v", fileName)
+		log.Fatalf(fmt.Sprintf("cannot open %v", fileName))
 	}
 	defer file.Close()
 	enc := json.NewEncoder(file)
@@ -149,7 +150,7 @@ func writeIntermediateResult(fileName string, intermediateResult []KeyValue) {
 // Reduce executor
 func ExecuteReduceTask(reducef reduceFunc, reduceTaskId int, totalMapTasks int) error {
 	var intermediate []KeyValue
-	//log.Println("reduce = ", reduceTaskId, " total = ", totalMapTasks)
+	// log.Println("reduce = ", reduceTaskId, " total = ", totalMapTasks)
 	for i := 0; i < totalMapTasks; i++ {
 		fileName := fmt.Sprintf("mr-%v-%v", i, reduceTaskId)
 		file, err := os.Open(fileName)
@@ -176,6 +177,7 @@ func ExecuteReduceTask(reducef reduceFunc, reduceTaskId int, totalMapTasks int) 
 	}
 	defer os.Remove(ofile.Name())
 	i := 0
+
 	for i < len(intermediate) {
 		j := i + 1
 		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
@@ -186,7 +188,6 @@ func ExecuteReduceTask(reducef reduceFunc, reduceTaskId int, totalMapTasks int) 
 			values = append(values, intermediate[k].Value)
 		}
 		output := reducef(intermediate[i].Key, values)
-
 		// this is the correct format for each line of Reduce output.
 		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
 		i = j

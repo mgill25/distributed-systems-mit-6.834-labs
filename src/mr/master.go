@@ -7,12 +7,10 @@ import "net/rpc"
 import "net/http"
 import "sync"
 import "time"
-import "fmt"
-
-// BUG: reduce tasks are starting before map tasks have had a chance to finish
-// Problem hint: time.Sleep or sync.Cond
+import "errors"
 
 type Task struct {
+	id       int
 	fileName string
 	status   string
 }
@@ -26,149 +24,199 @@ type Master struct {
 	reduce_done     bool
 	map_assigned    bool
 	reduce_assigned bool
-	map_counter     int
-	reduce_counter  int
 	nReduce         int
 	numInputFiles   int
 }
 
-func (m *Master) launchMonitor(taskType string, taskId int) {
+func (m *Master) getTaskById(taskType string, taskId int) (Task, error) {
+	var arr []Task
+	if taskType == "map" {
+		arr = m.map_tasks
+	} else {
+		arr = m.reduce_tasks
+	}
+	for _, t := range arr {
+		if t.id == taskId {
+			return t, nil
+		}
+	}
+	return Task{}, errors.New("No task by given id found")
+}
+
+func (m *Master) launchMonitor(taskType string, task Task) {
+	taskId := task.id
 	time.Sleep(10 * time.Second)
 	m.mux.Lock()
 	if taskType == "map" {
-		if m.map_tasks[taskId].status != "done" {
-			log.Println("re-enqueuing a map task", taskId)
-			m.map_tasks[taskId].status = "awaiting"
+		t, err := m.getTaskById("map", taskId)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if t.status != "done" {
+			for i, tt := range m.map_tasks {
+				if t.id == tt.id {
+					m.map_tasks[i].status = "awaiting"
+				}
+			}
 			m.map_assigned = false
 			m.map_done = false
-			m.map_counter--
+			log.Println("re-enqueued a map task", taskId, m.map_tasks)
+			log.Println("[MONITOR] Map all assigned:", m.map_assigned)
 		}
 	} else if taskType == "reduce" {
-		if m.reduce_tasks[taskId].status != "done" {
-			log.Println("re-enqueuing a reduce task", taskId)
-			m.reduce_tasks[taskId].status = "awaiting"
+		t, err := m.getTaskById("reduce", taskId)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if t.status != "done" {
+			for i, tt := range m.reduce_tasks {
+				if t.id == tt.id {
+					m.reduce_tasks[i].status = "awaiting"
+				}
+			}
 			m.reduce_assigned = false
 			m.reduce_done = false
-			m.reduce_counter--
+			log.Println("re-enqueued a reduce task", taskId, m.reduce_tasks)
+			log.Println("[MONITOR] Reduce all assigned:", m.reduce_assigned)
 		}
 	}
 	m.mux.Unlock()
 }
 
+// Iterate over the entire state and return the next
+// task that the workers can process
+func (m *Master) pickNextAwaitingTask(taskType string) (Task, bool) {
+	var arr []Task
+	if taskType == "map" {
+		arr = m.map_tasks
+	} else if taskType == "reduce" {
+		arr = m.reduce_tasks
+	}
+
+	for i, t := range arr {
+		if t.status == "done" || t.status == "assigned" {
+			// task has either been done already or is currently in progress
+			continue
+		}
+		// otherwise, this task can be picked.
+		arr[i].status = "assigned"
+		if i == len(arr)-1 {
+			// reached the end of array. all tasks assigned at least once.
+			return t, true
+		}
+		return t, false
+	}
+	return Task{}, false
+}
+
+// RPC Get a new task for a worker
+// MUTATION:
+//	- map_assigned, reduce_assigned flags
 func (m *Master) GetTask(req *TaskRequest, res *TaskResponse) error {
-	// time.Sleep(2 * time.Second)
 	m.mux.Lock()
-	if m.map_assigned && !m.map_done {
-		log.Println("map not done yet...")
-		m.sendWaitSignal(req, res)
-	}
 
-	if !m.map_assigned && !m.map_done {
-		m.assignToWorker("map", req, res)
-		if m.map_counter == m.numInputFiles-1 {
-			m.map_assigned = true
-		} else {
-			m.map_counter++
-		}
-		go m.launchMonitor("map", m.map_counter)
-		m.mux.Unlock()
-		return nil
-	} else if m.map_done && !m.reduce_assigned && !m.reduce_done {
-		m.assignToWorker("reduce", req, res)
-		if m.reduce_counter == m.nReduce-1 {
-			m.reduce_assigned = true
-		} else {
-			m.reduce_counter++
-		}
-		go m.launchMonitor("reduce", m.reduce_counter)
-		m.mux.Unlock()
-		return nil
-	}
-
-	if m.map_done && m.reduce_done {
+	// Basic flag pre-condition checks
+	if m.isMapDone() && m.isReduceDone() {
 		m.sendQuitSignal(req, res)
+	}
+
+	if !m.map_assigned && !m.isMapDone() {
+		nextTask, allAssigned := m.pickNextAwaitingTask("map")
+		if allAssigned {
+			m.map_assigned = true
+		}
+		m.assignToWorker("map", nextTask, req, res)
+		go m.launchMonitor("map", nextTask)
+		m.mux.Unlock()
+		return nil
+	} else if m.isMapDone() && !m.reduce_assigned && !m.isReduceDone() {
+		nextTask, allAssigned := m.pickNextAwaitingTask("reduce")
+		if allAssigned {
+			m.reduce_assigned = true
+		}
+		m.assignToWorker("reduce", nextTask, req, res)
+		go m.launchMonitor("reduce", nextTask)
+		m.mux.Unlock()
+		return nil
 	} else {
 		m.sendWaitSignal(req, res)
 	}
+
 	m.mux.Unlock()
 	return nil
 }
 
-// Assign a task to the requesting worker
-func (m *Master) assignToWorker(taskType string, req *TaskRequest, res *TaskResponse) {
+// RPC helper: Assign a task to the requesting worker
+// Mutation: RPC response object
+func (m *Master) assignToWorker(taskType string, task Task, req *TaskRequest, res *TaskResponse) {
 	// Create RPC response
 	// And then change the internal state to reflect current status
 	res.TaskType = taskType
 	res.NReduce = m.nReduce
 	if taskType == "map" {
-		res.FileName = m.map_tasks[m.map_counter].fileName
-		res.TaskId = m.map_counter
+		res.FileName = task.fileName
+		res.TaskId = task.id
 		res.Msg = "map_task"
-		m.map_tasks[m.map_counter].status = "assigned"
 	} else if taskType == "reduce" {
-		// no filename needed for reduce
-		res.TaskId = m.reduce_counter
+		res.TaskId = task.id
 		res.Msg = "reduce_task"
 		res.NumInputFiles = m.numInputFiles
-		m.reduce_tasks[m.reduce_counter].status = "assigned"
 	}
 }
 
+// RPC MUTATION msg
 func (m *Master) sendQuitSignal(req *TaskRequest, res *TaskResponse) {
 	res.Msg = "quit"
 }
 
+// RPC MUTATION msg
 func (m *Master) sendWaitSignal(req *TaskRequest, res *TaskResponse) {
 	res.Msg = "wait"
 }
 
-// are all map tasks done?
+// QUERY: Are all map tasks done?
 func (m *Master) isMapDone() bool {
-	all_map_done := true
 	for i := range m.map_tasks {
-		if m.map_tasks[i].status == "done" {
-			all_map_done = all_map_done && true
-		} else {
-			all_map_done = all_map_done && false
+		if m.map_tasks[i].status != "done" {
+			return false
 		}
 	}
-	return all_map_done
+	return true
 }
 
-// are all reduce tasks done?
+// QUERY: Are all reduce tasks done?
 func (m *Master) isReduceDone() bool {
-	all_reduce_done := true
 	for i := range m.reduce_tasks {
-		if m.reduce_tasks[i].status == "done" {
-			all_reduce_done = all_reduce_done && true
-		} else {
-			all_reduce_done = all_reduce_done && false
+		if m.reduce_tasks[i].status != "done" {
+			return false
 		}
 	}
-	return all_reduce_done
+	return true
 }
 
-// Mark this particular file as done
+// MUTATION: Mark a single map or reduce task as done.
+//		- task.status = "done" if matches the taskId
+func (m *Master) MarkTaskDone(taskArray []Task, taskId int) {
+	for i, t := range taskArray {
+		if t.id == taskId {
+			taskArray[i].status = "done"
+		}
+	}
+}
+
+// RPC: Receives a task Id from worker and marks that task done.
+// MUTATION:
+//		- map_done, reduce_done flags
+//		- task.status (from an inner function call)
 func (m *Master) MarkDone(req *DoneReq, res *DoneRes) error {
 	m.mux.Lock()
 	taskType := req.TaskType
 	if taskType == "map" && !m.map_done {
-		m.map_tasks[req.TaskId].status = "done"
+		m.MarkTaskDone(m.map_tasks, req.TaskId)
 		m.map_done = m.isMapDone()
-		log.Println(fmt.Sprintf("[MASTER] marked map task %v as done", req.TaskId))
-		log.Println("STATE:", m.map_tasks, "MAP COUNTER:", m.map_counter)
-		if m.map_done {
-			log.Println("[MASTER] >>>>>>>>>>>>>>>>>> all map done")
-		}
-	}
-	if taskType == "reduce" && !m.reduce_done {
-		m.reduce_tasks[req.TaskId].status = "done"
-		log.Println(fmt.Sprintf("[MASTER] marked reduce task %v as done", req.TaskId))
-		log.Println("STATE:", m.reduce_tasks)
+	} else if taskType == "reduce" && !m.reduce_done {
+		m.MarkTaskDone(m.reduce_tasks, req.TaskId)
 		m.reduce_done = m.isReduceDone()
-		if m.reduce_done {
-			log.Println("[MASTER] >>>>>>>>>>>>>>>>>> all reduce done")
-		}
 	}
 	res.Ok = true
 	m.mux.Unlock()
@@ -224,14 +272,13 @@ func MakeMaster(files []string, nReduce int) *Master {
 	m.reduce_done = false
 	m.map_assigned = false
 	m.reduce_assigned = false
-	m.map_counter = 0
-	m.reduce_counter = 0
 	m.nReduce = nReduce
 	m.numInputFiles = len(files)
 
 	// initialize all map tasks
-	for _, file := range files {
+	for i, file := range files {
 		mapTask := Task{
+			id:       i,
 			fileName: file,
 			status:   "awaiting",
 		}
@@ -241,6 +288,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 	// initialize all reduce tasks
 	for i := 0; i < nReduce; i++ {
 		reduceTask := Task{
+			id:     i,
 			status: "awaiting",
 		}
 		m.reduce_tasks = append(m.reduce_tasks, reduceTask)

@@ -117,7 +117,6 @@ Assume locks where the master data structures need locking to support concurrent
 				if not map_done:
 					if map_tasks[task_id].task_status == "assigned":
 						map_tasks[i].task_status = "done"
-						break
 					map_done = all([i.task_status == "done" for i in map_tasks])
 				if not reduce_done:
 					# similar for reduce_done
@@ -167,3 +166,19 @@ We don't really need to use any kind of counters if we can help it. In an array 
 
 Similarly, if we have been told that there are a total of nReduce tasks (say n=10), we will simply have an array of 10 task status.
 
+## Design Revisions
+
+**Flaws**
+The above approach had a few flaws: it didn't take concurrent access into account fully. During concurrent RPC calls, it is a bad idea to maintain counter state for a few reasons:
+	- It makes reasoning about the code and the calls harder
+	- It lead to strange bugs where the monitor, on timeout, would decrement the count. This was particulary bad because I was using the counter itself as a task_id, which was a bad idea: because a task that needs to be reassigned would need to find the exact task id for the reassignment, and a global counter isn't really going to give us that.
+
+Taking these things into account, I have revised my approach to now just store the entire state table of booleans. On every task assignment or re-assignment, we simply iterate over the entire state table and check which tasks are the ones which are marked as "awaiting" yet.
+
+I have also introduced a convenience abstraction of a `Task` object, which I pass around and query (although directly mutating a task is not going to do anything because that only mutates a local copy intead of the global task inside the Master's task array).
+
+## Current situation
+
+The word count and the indexing examples are passing. The map parallelism test seems to only pass when it is preceeded by the wordcount test, suggesting some leftover state or process within the master that isn't properly cleaned up. 
+
+The reduce parallelism test _always_ hangs up. We do not see any more active RPC calls in that case after the 6th worker successfully registers itself and marks its task as done.
