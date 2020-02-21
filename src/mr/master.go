@@ -36,22 +36,20 @@ func (m *Master) launchMonitor(taskType string, task Task) {
 		for i, t := range m.map_tasks {
 			if t.id == taskId && t.status != "done" {
 				m.map_tasks[i].status = "awaiting"
+				m.map_assigned = false
+				m.map_done = false
+				log.Println("re-enqueued a map task: ", taskId)
 			}
 		}
-		m.map_assigned = false
-		m.map_done = false
-		log.Println("re-enqueued a map task: ", taskId)
-		m.printMapState()
 	} else if taskType == "reduce" {
 		for i, t := range m.reduce_tasks {
 			if t.id == taskId && t.status != "done" {
 				m.reduce_tasks[i].status = "awaiting"
+				m.reduce_assigned = false
+				m.reduce_done = false
+				log.Println("re-enqueued a reduce task: ", taskId)
 			}
 		}
-		m.reduce_assigned = false
-		m.reduce_done = false
-		log.Println("re-enqueued a reduce task: ", taskId)
-		m.printReduceState()
 	}
 	m.mux.Unlock()
 }
