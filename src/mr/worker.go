@@ -43,7 +43,7 @@ type reduceFunc func(string, []string) string
 //
 func Worker(mapf mapperFunc, reducef reduceFunc) {
 	for {
-		log.Println("[WORKER] Requesting new task...")
+		// log.Println("[WORKER] Requesting new task...")
 		res := GetNewTask()
 		if res.Msg == "quit" {
 			log.Println("[WORKER] Quitting...")
@@ -187,6 +187,7 @@ func ExecuteReduceTask(reducef reduceFunc, reduceTaskId int, totalMapTasks int) 
 		for k := i; k < j; k++ {
 			values = append(values, intermediate[k].Value)
 		}
+		log.Println("applying reducef on ", len(values), " sized input")
 		output := reducef(intermediate[i].Key, values)
 		// this is the correct format for each line of Reduce output.
 		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)

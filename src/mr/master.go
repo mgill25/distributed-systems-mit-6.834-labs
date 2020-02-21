@@ -7,7 +7,7 @@ import "net/rpc"
 import "net/http"
 import "sync"
 import "time"
-import "errors"
+import "fmt"
 
 type Task struct {
 	id       int
@@ -28,57 +28,30 @@ type Master struct {
 	numInputFiles   int
 }
 
-func (m *Master) getTaskById(taskType string, taskId int) (Task, error) {
-	var arr []Task
-	if taskType == "map" {
-		arr = m.map_tasks
-	} else {
-		arr = m.reduce_tasks
-	}
-	for _, t := range arr {
-		if t.id == taskId {
-			return t, nil
-		}
-	}
-	return Task{}, errors.New("No task by given id found")
-}
-
 func (m *Master) launchMonitor(taskType string, task Task) {
-	taskId := task.id
 	time.Sleep(10 * time.Second)
 	m.mux.Lock()
+	taskId := task.id
 	if taskType == "map" {
-		t, err := m.getTaskById("map", taskId)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if t.status != "done" {
-			for i, tt := range m.map_tasks {
-				if t.id == tt.id {
-					m.map_tasks[i].status = "awaiting"
-				}
+		for i, t := range m.map_tasks {
+			if t.id == taskId && t.status != "done" {
+				m.map_tasks[i].status = "awaiting"
 			}
-			m.map_assigned = false
-			m.map_done = false
-			log.Println("re-enqueued a map task", taskId, m.map_tasks)
-			log.Println("[MONITOR] Map all assigned:", m.map_assigned)
 		}
+		m.map_assigned = false
+		m.map_done = false
+		log.Println("re-enqueued a map task: ", taskId)
+		m.printMapState()
 	} else if taskType == "reduce" {
-		t, err := m.getTaskById("reduce", taskId)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if t.status != "done" {
-			for i, tt := range m.reduce_tasks {
-				if t.id == tt.id {
-					m.reduce_tasks[i].status = "awaiting"
-				}
+		for i, t := range m.reduce_tasks {
+			if t.id == taskId && t.status != "done" {
+				m.reduce_tasks[i].status = "awaiting"
 			}
-			m.reduce_assigned = false
-			m.reduce_done = false
-			log.Println("re-enqueued a reduce task", taskId, m.reduce_tasks)
-			log.Println("[MONITOR] Reduce all assigned:", m.reduce_assigned)
 		}
+		m.reduce_assigned = false
+		m.reduce_done = false
+		log.Println("re-enqueued a reduce task: ", taskId)
+		m.printReduceState()
 	}
 	m.mux.Unlock()
 }
@@ -109,16 +82,33 @@ func (m *Master) pickNextAwaitingTask(taskType string) (Task, bool) {
 	return Task{}, false
 }
 
+func (m *Master) printMapState() {
+	log.Println("=========MAP STATE=========")
+	for idx, task := range m.map_tasks {
+		log.Println(fmt.Sprintf("[TASK %v]: ID=%v STATUS=%v", idx, task.id, task.status))
+	}
+	log.Println("==================")
+}
+
+func (m *Master) printReduceState() {
+	log.Println("=========REDUCE STATE=========")
+	for idx, task := range m.reduce_tasks {
+		log.Println(fmt.Sprintf("[TASK %v]: ID=%v STATUS=%v", idx, task.id, task.status))
+	}
+	log.Println("==================")
+}
+
 // RPC Get a new task for a worker
 // MUTATION:
 //	- map_assigned, reduce_assigned flags
 func (m *Master) GetTask(req *TaskRequest, res *TaskResponse) error {
 	m.mux.Lock()
-
+	time.Sleep(1 * time.Second)
 	// Basic flag pre-condition checks
 	if m.isMapDone() && m.isReduceDone() {
 		m.sendQuitSignal(req, res)
 		m.mux.Unlock()
+		log.Println("Sending QUIT signal")
 		return nil
 	}
 
@@ -130,6 +120,8 @@ func (m *Master) GetTask(req *TaskRequest, res *TaskResponse) error {
 		m.assignToWorker("map", nextTask, req, res)
 		go m.launchMonitor("map", nextTask)
 		m.MarkTaskAssigned(m.map_tasks, nextTask.id)
+		log.Println("Assigned map")
+		m.printMapState()
 		m.mux.Unlock()
 		return nil
 	} else if m.isMapDone() && !m.reduce_assigned && !m.isReduceDone() {
@@ -140,6 +132,8 @@ func (m *Master) GetTask(req *TaskRequest, res *TaskResponse) error {
 		m.assignToWorker("reduce", nextTask, req, res)
 		go m.launchMonitor("reduce", nextTask)
 		m.MarkTaskAssigned(m.reduce_tasks, nextTask.id)
+		log.Println("Assigning reduce")
+		m.printReduceState()
 		m.mux.Unlock()
 		return nil
 	} else {
@@ -211,7 +205,7 @@ func (m *Master) MarkTaskDone(taskArray []Task, taskId int) {
 //		- task.status = "assigned" if matches the taskId
 func (m *Master) MarkTaskAssigned(taskArray []Task, taskId int) {
 	for i, t := range taskArray {
-		if t.id == taskId {
+		if t.id == taskId && t.status != "done" {
 			taskArray[i].status = "assigned"
 		}
 	}
@@ -259,7 +253,8 @@ func (m *Master) server() {
 func (m *Master) Done() bool {
 	ret := false
 	m.mux.Lock()
-	if m.map_done && m.reduce_done {
+	if m.isMapDone() && m.isReduceDone() {
+		log.Println("<<<<<<<<<<<<<<<<<ALL DONE>>>>>>>>>>>>>>>>")
 		ret = true
 	}
 	m.mux.Unlock()
