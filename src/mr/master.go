@@ -99,7 +99,7 @@ func (m *Master) pickNextAwaitingTask(taskType string) (Task, bool) {
 			continue
 		}
 		// otherwise, this task can be picked.
-		arr[i].status = "assigned"
+		// arr[i].status = "assigned"
 		if i == len(arr)-1 {
 			// reached the end of array. all tasks assigned at least once.
 			return t, true
@@ -118,6 +118,8 @@ func (m *Master) GetTask(req *TaskRequest, res *TaskResponse) error {
 	// Basic flag pre-condition checks
 	if m.isMapDone() && m.isReduceDone() {
 		m.sendQuitSignal(req, res)
+		m.mux.Unlock()
+		return nil
 	}
 
 	if !m.map_assigned && !m.isMapDone() {
@@ -127,6 +129,7 @@ func (m *Master) GetTask(req *TaskRequest, res *TaskResponse) error {
 		}
 		m.assignToWorker("map", nextTask, req, res)
 		go m.launchMonitor("map", nextTask)
+		m.MarkTaskAssigned(m.map_tasks, nextTask.id)
 		m.mux.Unlock()
 		return nil
 	} else if m.isMapDone() && !m.reduce_assigned && !m.isReduceDone() {
@@ -136,14 +139,14 @@ func (m *Master) GetTask(req *TaskRequest, res *TaskResponse) error {
 		}
 		m.assignToWorker("reduce", nextTask, req, res)
 		go m.launchMonitor("reduce", nextTask)
+		m.MarkTaskAssigned(m.reduce_tasks, nextTask.id)
 		m.mux.Unlock()
 		return nil
 	} else {
 		m.sendWaitSignal(req, res)
+		m.mux.Unlock()
+		return nil
 	}
-
-	m.mux.Unlock()
-	return nil
 }
 
 // RPC helper: Assign a task to the requesting worker
@@ -200,6 +203,16 @@ func (m *Master) MarkTaskDone(taskArray []Task, taskId int) {
 	for i, t := range taskArray {
 		if t.id == taskId {
 			taskArray[i].status = "done"
+		}
+	}
+}
+
+// MUTATION: Mark a single map or reduce task as assigned.
+//		- task.status = "assigned" if matches the taskId
+func (m *Master) MarkTaskAssigned(taskArray []Task, taskId int) {
+	for i, t := range taskArray {
+		if t.id == taskId {
+			taskArray[i].status = "assigned"
 		}
 	}
 }
