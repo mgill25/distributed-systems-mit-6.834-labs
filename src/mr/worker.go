@@ -52,8 +52,6 @@ func Worker(mapf mapperFunc, reducef reduceFunc) {
 			HandleMap(&res, mapf)
 		} else if res.Msg == "reduce_task" {
 			HandleReduce(&res, reducef)
-		} else {
-			log.Println("Do nothing. Call again")
 		}
 		time.Sleep(1 * time.Second)
 	}
@@ -127,7 +125,6 @@ func ExecuteMapTask(mapf mapperFunc, fileName string, mapTaskId int, nReduce int
 	}
 	for fileName, batchArray := range batch {
 		writeIntermediateResult(fileName, batchArray)
-		log.Println("Written to", fileName)
 	}
 	return nil
 }
@@ -151,7 +148,7 @@ func writeIntermediateResult(fileName string, intermediateResult []KeyValue) {
 // Reduce executor
 func ExecuteReduceTask(reducef reduceFunc, reduceTaskId int, totalMapTasks int) error {
 	var intermediate []KeyValue
-	log.Println("reduce = ", reduceTaskId, " total = ", totalMapTasks)
+	// log.Println("reduce = ", reduceTaskId, " total = ", totalMapTasks)
 	for i := 0; i < totalMapTasks; i++ {
 		fileName := fmt.Sprintf("mr-%v-%v", i, reduceTaskId)
 		file, err := os.Open(fileName)

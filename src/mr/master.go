@@ -28,7 +28,7 @@ type Master struct {
 }
 
 func (m *Master) launchMonitor(taskType string, task Task) {
-	time.Sleep(10 * time.Second)
+	time.Sleep(5 * time.Second)
 	m.mux.Lock()
 	taskId := task.id
 	if taskType == "map" {
