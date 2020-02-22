@@ -9,6 +9,7 @@ package main
 
 import "../mr"
 import "strings"
+import "log"
 import "fmt"
 import "os"
 import "syscall"
@@ -67,7 +68,7 @@ func Map(filename string, contents string) []mr.KeyValue {
 	pid := os.Getpid()
 
 	n := nparallel("map")
-
+	log.Println("nparallel =", n)
 	kva := []mr.KeyValue{}
 	kva = append(kva, mr.KeyValue{
 		fmt.Sprintf("times-%v", pid),

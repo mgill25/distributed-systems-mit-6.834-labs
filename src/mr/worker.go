@@ -127,6 +127,7 @@ func ExecuteMapTask(mapf mapperFunc, fileName string, mapTaskId int, nReduce int
 	}
 	for fileName, batchArray := range batch {
 		writeIntermediateResult(fileName, batchArray)
+		log.Println("Written to", fileName)
 	}
 	return nil
 }
@@ -150,13 +151,20 @@ func writeIntermediateResult(fileName string, intermediateResult []KeyValue) {
 // Reduce executor
 func ExecuteReduceTask(reducef reduceFunc, reduceTaskId int, totalMapTasks int) error {
 	var intermediate []KeyValue
-	// log.Println("reduce = ", reduceTaskId, " total = ", totalMapTasks)
+	log.Println("reduce = ", reduceTaskId, " total = ", totalMapTasks)
 	for i := 0; i < totalMapTasks; i++ {
 		fileName := fmt.Sprintf("mr-%v-%v", i, reduceTaskId)
 		file, err := os.Open(fileName)
 		defer file.Close()
 		if err != nil {
-			return err
+			// Some files might not exist because they were never created!
+			// Note: the ihash() function doesn't guarantee all reduce ids up to nReduce
+			// will always be created. That depends entirely on the hashed value based on key.
+			// So in a way, we are brute-forcing by trying to read ALL files and ignoring
+			// them if they do not.
+			// Better approach: Mappers tell master about all files they created and Master
+			// communicates that with the Reducers, who only read the files they are told about.
+			continue
 		}
 		dec := json.NewDecoder(file)
 		for {
@@ -187,7 +195,6 @@ func ExecuteReduceTask(reducef reduceFunc, reduceTaskId int, totalMapTasks int) 
 		for k := i; k < j; k++ {
 			values = append(values, intermediate[k].Value)
 		}
-		log.Println("applying reducef on ", len(values), " sized input")
 		output := reducef(intermediate[i].Key, values)
 		// this is the correct format for each line of Reduce output.
 		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
