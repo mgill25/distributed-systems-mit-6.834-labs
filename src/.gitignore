@@ -9,3 +9,4 @@ mr-tmp/
 mrmaster
 mrsequential
 mrworker
+*.so
