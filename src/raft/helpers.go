@@ -6,7 +6,7 @@ import (
 )
 
 func (rf *Raft) GetElectionTimout() time.Duration {
-	max := 2
+	max := 5
 	min := 1
 	randTime := rand.Intn(max-min) + min
 	return time.Duration(randTime)

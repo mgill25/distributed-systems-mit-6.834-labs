@@ -124,3 +124,5 @@ In this case, each candidate will "time out", increment its term and start a new
 ### Bugs
 
 - I have multiple leaders winning elections and sending out heartbeats
+- RequestVote RPCs block and fail to return
+- RequestVote RPCs are serial, not concurrent

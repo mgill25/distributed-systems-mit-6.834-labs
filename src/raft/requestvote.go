@@ -1,6 +1,8 @@
 package raft
 
-import "log"
+import (
+	"log"
+)
 
 //
 // example RequestVote RPC arguments structure.
@@ -29,15 +31,33 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-	log.Println(rf.me, "Inside RequestVote RPC Handler. My current Term = ", rf.currentTerm)
-	log.Println(rf.me, "args=", args)
-	if args.Term < rf.currentTerm {
-		log.Println(rf.me, "Sorry, I am not granting the vote")
-		reply = &RequestVoteReply{Term: rf.currentTerm, VoteGranted: false}
-		return
-	} else if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.isLogUpdated(args.CandidateId) {
-		log.Println(rf.me, "I am Granting the vote!")
-		reply = &RequestVoteReply{Term: rf.currentTerm + 1, VoteGranted: true}
+	rf.mu.Lock()
+	votedFor := rf.votedFor
+	currentTerm := rf.currentTerm
+	me := rf.me
+	rf.mu.Unlock()
+
+	if args.Term < currentTerm {
+		log.Println(me, "My term is greater than yours, No bueno")
+		reply = &RequestVoteReply{
+			Term:        currentTerm,
+			VoteGranted: false,
+		}
 		return
 	}
+	if votedFor == -1 && rf.isLogUpdated(args.CandidateId) {
+		// TODO: "votedFor is null **or candidateId**
+		log.Println(me, "I am Granting the vote!")
+		reply = &RequestVoteReply{
+			Term:        currentTerm + 1,
+			VoteGranted: true,
+		}
+		rf.mu.Lock()
+		rf.votedFor = args.CandidateId
+		rf.mu.Unlock()
+		return
+	}
+	// I should never be stuck in the limbo! Lets check our enforcement of the Rules
+	log.Println(me, "~~~~~~~~~~~~~~Stuck in a limbo~~~~~~~~~~~~~~")
+	return
 }

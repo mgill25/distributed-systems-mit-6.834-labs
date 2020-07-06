@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"log"
 	"time"
 )
@@ -18,6 +19,7 @@ func (rf *Raft) watchAndTriggerElection() {
 	currentTime := time.Now()
 	lastSeenDelta := currentTime.Sub(rf.lastUpdated)
 	electionTimeout := rf.GetElectionTimout() * time.Second
+	fmt.Println(rf.me, "Election timeout = ", electionTimeout)
 	rf.mu.Unlock()
 	if lastSeenDelta > electionTimeout {
 		log.Println("[", rf.me, "] Triggering Leader Election after", lastSeenDelta)
@@ -51,12 +53,14 @@ func (rf *Raft) startElection() {
 	rf.currentTerm += 1
 
 	// 2. Vote for Self (represented via votedFor)
+	fmt.Println(rf.me, " voting for myself haha")
 	rf.votedFor = rf.me
 
 	// 3. Reset Election Timer...how? TODO: Verify this. I am not sure about this.
 	rf.lastUpdated = time.Now()
 
 	// 4. Send RequestVote RPCs to all other servers
+	log.Println("Sending out RV RPCs...")
 	for i, _ := range rf.peers {
 		if i != rf.me {
 			args := RequestVoteArgs{
@@ -73,6 +77,7 @@ func (rf *Raft) startElection() {
 			}
 		}
 	}
+	log.Println("Collectting RV RPC responses")
 
 	// 5. If votes received from the majority, become leader. How?
 	votesRequired := 2 // out of 3. hardcoded for now. TODO: Make it generic
@@ -81,5 +86,6 @@ func (rf *Raft) startElection() {
 		rf.state = "Leader"
 		go rf.SendHeartBeats(rf.currentTerm)
 	}
+	log.Println(rf.me, "Unlocking")
 	rf.mu.Unlock()
 }
