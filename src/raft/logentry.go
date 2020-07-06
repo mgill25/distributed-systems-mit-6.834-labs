@@ -1,10 +1,11 @@
 package raft
 
 // LogEntry represents a single log entry in the entire log
-// What does a Log Entry need? Everything that is required to
-// construct the replicated state machine! What is that?
+// Each log entry contains the command for state machine, and the term
+// when the entry was received by the leader. first index = 1
 type LogEntry struct {
 	Command interface{}
 	Term 	int
+	Index   int  // TODO: Unsure if needed, just adding as precaution
 }
 

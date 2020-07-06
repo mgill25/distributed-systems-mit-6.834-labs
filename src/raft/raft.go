@@ -17,11 +17,12 @@ package raft
 //   in the same server.
 //
 import (
+	"sync"
 	"time"
+
+	"../labrpc"
 )
 
-import "sync"
-import "../labrpc"
 // import "time"
 
 // import "bytes"
@@ -42,19 +43,25 @@ type Raft struct {
 	// state a Raft server must maintain.
 
 	// Volatile on all servers
-	commitIndex int
-	lastApplied int
+	commitIndex int // index of the highest log entry known to be committed
+	lastApplied int // index of the highest log entry "applied" to the state machine
 
-	// Volatile on leaders
-	nextIndex 	[]int
-	matchIndex 	[]int
+	// Volatile on leaders (reinitialized after election)
+	// nextIndex: For each follower, index of the next log entry to send to that server.
+	// initialized to (leader's last log index + 1)
+	nextIndex []int
+	// MatchIndex: For each server, index of highest log entry known to be replicated on server.
+	// Initialized to 0, increases monotonically
+	matchIndex []int
 
 	// Persisted state on all servers
-	log  		[]LogEntry
-	votedFor 	int
-	currentTerm int
+	log         []LogEntry // first index = 1 in the log (acc to paper)
+	votedFor    int        // candidateId that received the vote in the current term (or null if None)
+	currentTerm int        // latest term the server has seen. initialized to 0 on boot. increases monotonically
 
 	// Internal
-	lastUpdated time.Time
+	lastUpdated      time.Time
+	logIndex         int
+	electionUnderWay bool
+	state            string
 }
-

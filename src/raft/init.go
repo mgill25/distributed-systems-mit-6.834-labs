@@ -1,8 +1,10 @@
 package raft
 
-import "time"
+import (
+	"time"
 
-import "../labrpc"
+	"../labrpc"
+)
 
 //
 // the service or tester wants to create a Raft server. the ports
@@ -22,6 +24,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
+	rf.state = "Follower"
 
 	// Your initialization code here (2A, 2B, 2C).
 	// currentTerm: latest term server has seen (initialized to 0 on first boot, increases monotonically)
@@ -36,8 +39,15 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.commitIndex = 0
 	rf.lastApplied = 0
-	rf.nextIndex = nil 		// TODO
-	rf.matchIndex = nil 	// TODO
+
+	rf.matchIndex = make([]int, 0)
+	rf.nextIndex = make([]int, len(rf.peers))
+
+	for i := range rf.peers {
+		// nextIndex initialized to last log index + 1 for each follower
+		// TODO: should we ignore it for leader itself, or let it be?
+		rf.nextIndex[i] = rf.logIndex + 1
+	}
 
 	rf.lastUpdated = time.Now()
 
