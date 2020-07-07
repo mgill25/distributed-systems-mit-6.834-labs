@@ -20,7 +20,15 @@ type AppendEntryReply struct {
 
 func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	rf.lastUpdated = time.Now()
-	rf.mu.Unlock()
+	if args.Term < rf.currentTerm {
+		reply.Term = -1
+		reply.Success = false
+	} else if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		rf.state = "Follower"
+		reply.Success = true // FIXME: This is incomplete
+	}
 	return
 }

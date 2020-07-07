@@ -50,8 +50,8 @@ func (rf *Raft) HeartBeat(currentTerm int) {
 			ok := rf.sendAppendEntry(i, &args, &reply)
 			if ok {
 				rf.mu.Lock()
+				defer rf.mu.Unlock()
 				rf.lastUpdated = time.Now()
-				rf.mu.Unlock()
 			}
 		}
 	}

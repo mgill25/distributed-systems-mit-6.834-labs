@@ -6,7 +6,7 @@ import (
 )
 
 func (rf *Raft) GetElectionTimout() time.Duration {
-	max := 5
+	max := 4
 	min := 1
 	randTime := rand.Intn(max-min) + min
 	return time.Duration(randTime)
@@ -19,15 +19,13 @@ func (rf *Raft) GetState() (int, bool) {
 	var isleader bool
 	// Your code here (2A).
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	term = rf.currentTerm
-	// var choices = []bool{ true, false, false, }
-	// isleader = choices[rand.Intn(len(choices))] // TODO: This is BADADDDDD!!!!!!!!!!! (or is it?)
 	if rf.state == "leader" {
 		isleader = true
 	} else {
 		isleader = false
 	}
-	rf.mu.Unlock()
 	return term, isleader
 }
 

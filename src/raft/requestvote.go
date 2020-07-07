@@ -1,8 +1,6 @@
 package raft
 
-import (
-	"log"
-)
+import "log"
 
 //
 // example RequestVote RPC arguments structure.
@@ -26,38 +24,34 @@ type RequestVoteReply struct {
 	VoteGranted bool
 }
 
-//
-// example RequestVote RPC handler.
-//
+// RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+	// log.Printf("Node [%d] %s\n", rf.me, "Inside RequestVote handler")
+	log.Printf("() Node [%d] %s: %s", rf.me, "whoami?", rf.state)
 	rf.mu.Lock()
-	votedFor := rf.votedFor
-	currentTerm := rf.currentTerm
-	me := rf.me
-	rf.mu.Unlock()
+	defer rf.mu.Unlock()
 
-	if args.Term < currentTerm {
-		log.Println(me, "My term is greater than yours, No bueno")
-		reply = &RequestVoteReply{
-			Term:        currentTerm,
-			VoteGranted: false,
+	log.Printf("Node [%d] %s", rf.me, "Inside requestvote.RequestVote()\n")
+	log.Printf("Node [%d] %s: %s", rf.me, "whoami?", rf.state)
+
+	// 1. Reply false if term < currentTerm
+	if args.Term < rf.currentTerm {
+		reply.VoteGranted = false
+	} else if rf.votedFor == -1 && rf.isLogUpdated(args.CandidateId) {
+		// 2. If votedFor is null or CandidateId, and Candidate's log is at least
+		// as up to date as receiver's log, grant vote
+		reply.VoteGranted = true
+		// (Rules for Servers)
+		// If RPC request or response contains term T > currentTerm,
+		// set currentTerm = T, convert to follower
+		if args.Term > rf.currentTerm {
+			rf.state = "Follower"
+			rf.currentTerm = args.Term
 		}
-		return
+	} else {
+		reply.VoteGranted = false
 	}
-	if votedFor == -1 && rf.isLogUpdated(args.CandidateId) {
-		// TODO: "votedFor is null **or candidateId**
-		log.Println(me, "I am Granting the vote!")
-		reply = &RequestVoteReply{
-			Term:        currentTerm + 1,
-			VoteGranted: true,
-		}
-		rf.mu.Lock()
-		rf.votedFor = args.CandidateId
-		rf.mu.Unlock()
-		return
-	}
-	// I should never be stuck in the limbo! Lets check our enforcement of the Rules
-	log.Println(me, "~~~~~~~~~~~~~~Stuck in a limbo~~~~~~~~~~~~~~")
+	log.Printf("Node [%d] %s", rf.me, "Quitting requestvote.RequestVote()\n")
 	return
 }

@@ -1,4 +1,3 @@
-
 # Brainstorming on Raft
 
 Command is appended to the replicated log!
@@ -126,3 +125,4 @@ In this case, each candidate will "time out", increment its term and start a new
 - I have multiple leaders winning elections and sending out heartbeats
 - RequestVote RPCs block and fail to return
 - RequestVote RPCs are serial, not concurrent
+- LiveLocks and no leader is being elected
