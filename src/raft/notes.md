@@ -140,3 +140,47 @@ A node is sending true in reply to multiple RequestVote calls. This should not h
 - labgob warning: Decoding into a non-default variable/field Term may not work
 
 * I might have to re-tweak electionTimeout (or HeartBeatTimeout) again. It seems like there are too many candidates (which means too many nodes getting timed out within a short amount of time). This is not an unlikely scenaio and should ba handled on its own, but worth looking into why it happens. Perhaps the test is written to simulate such a case?
+
+
+## Election Timeout fine grained rules
+
+- monitor, watching the election timeout
+- rpc handlers
+
+* election timeout is reset in the rpc handlers
+* election is triggered based on the timeout in the monitor
+
+**Follower Scenario**
+From Figure 2: *"If election timeout elapses without receiving AppendEntries RPC from current leader or granting vote to candidate: convert to candidate"*
+
+If election timeout elapses without 
+        - Receiving AppendEntries RPC from current leader OR
+        - Without Granting vote to Candidate
+Then
+        - Convert to Candidate
+-------------------------------------------------------------
+
+During the Election Timeout elapse check, we need to do 2 additional checks:
+        - The timeout happened without receiving any AE RPC from the current leader
+        - The timeout happened _without_ granting vote to a candidate
+
+Possible implication: When we receive an AE RPC from someone who is not our current leader, we do not reset the timeout and revert to candidate state eventually.
+
+Possible implication: When we do not grant vote to a candidate, we don't reset the timeout.
+
+In both of the above implications, we can simply store internal state and use those internal state checks in our monitor for conversion to Candidate.
+The paper's Section 5.2 mentions election timeouts in the range of 150 to 300 milliseconds. 
+
+Such a range only makes sense if the leader sends heartbeats 
+        considerably more often than once per 150 milliseconds. 
+
+Because the tester limits you to 10 heartbeats per second, you will have to use an election timeout larger than the paper's 
+        150 to 300 milliseconds, but not too large,
+because then you may fail to elect a leader within five seconds. 
+
+----------------------
+
+
+Election Timeout, despite having a broad range, always gets stuck around the same value for different instances of Raft. This happens despite having a unique unix UTC time based RNG seed that gets initialized at the start of the process. 
+
+This is very strange.

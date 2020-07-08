@@ -27,9 +27,9 @@ func (rf *Raft) startElection() {
 	rf.state = "Candidate"
 	rf.currentTerm += 1
 	rf.votedFor = rf.me
-	rf.lastUpdated = time.Now()
+	rf.lastUpdated = time.Now() // This is important as per the spec on Figure 2
 
-	log.Printf("Node [%d] Term [%d] %s", rf.me, rf.currentTerm, "Inside startElection()\n")
+	log.Printf("Node [%d] Term [%d] %s", rf.me, rf.currentTerm, "Beginning Election\n")
 
 	me := rf.me
 	currentTerm := rf.currentTerm
@@ -37,6 +37,7 @@ func (rf *Raft) startElection() {
 	rf.mu.Unlock()
 
 	responseChan := make(chan int)
+	becomeFollower := false
 	for i, _ := range rf.peers {
 		if i != me {
 			args := RequestVoteArgs{
@@ -50,8 +51,11 @@ func (rf *Raft) startElection() {
 			// log.Printf("Node [%d] %s %d\n", me, "Spawning sendRequestVote goroutine for peer", i)
 			go func(i int) {
 				ok := rf.sendRequestVote(i, &args, &reply) // might be unreliable
+				log.Printf("Node [%d] Peer[%d] says %v\n", me, i, reply)
 				if ok {
-					if reply.VoteGranted {
+					if reply.Term > currentTerm {
+						becomeFollower = true
+					} else if reply.VoteGranted {
 						responseChan <- 1
 					} else {
 						responseChan <- 0
@@ -59,21 +63,27 @@ func (rf *Raft) startElection() {
 				} else {
 					responseChan <- 0
 				}
-				log.Printf("Node [%d] Peer[%d] says %v\n", me, i, reply)
 			}(i)
 		}
 	}
-	log.Printf("Node [%d] %s\n", me, "Listening on responseChan")
 	gotResponses := 1
 	for i := 0; i < len(rf.peers)-1; i++ {
 		gotResponses += <-responseChan
 	}
 	votesRequired := 2 // out of 3. TODO: Make it generic
+	isLeader := false
 	if gotResponses >= votesRequired {
-		log.Printf("Node [%d] %s", me, "Got majority votes!\n")
-		rf.mu.Lock()
-		rf.state = "Leader"
-		rf.mu.Unlock()
-		go rf.SendHeartBeats(currentTerm, me)
+		isLeader = true
 	}
+	rf.mu.Lock()
+	if becomeFollower {
+		rf.state = "Follower"
+		log.Printf("Node [%d] %s", me, "Becoming Follower!\n")
+	} else if isLeader {
+		log.Printf("Node [%d] %s", me, "Becoming Leader!\n")
+		rf.state = "Leader"
+	}
+	rf.lastUpdated = time.Now()
+	rf.mu.Unlock()
+	go rf.SendHeartBeats(currentTerm, me)
 }
