@@ -21,7 +21,9 @@ type AppendEntryReply struct {
 func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	// log.Printf("Node [%d] lastUpdated before heartbeat: %v\n", rf.me, rf.lastUpdated)
 	rf.lastUpdated = time.Now()
+	// log.Printf("Node [%d] lastUpdated after  heartbeat: %v\n", rf.me, rf.lastUpdated)
 	if args.Term < rf.currentTerm {
 		reply.Term = -1
 		reply.Success = false

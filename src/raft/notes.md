@@ -123,6 +123,20 @@ In this case, each candidate will "time out", increment its term and start a new
 ### Bugs
 
 - I have multiple leaders winning elections and sending out heartbeats
-- RequestVote RPCs block and fail to return
-- RequestVote RPCs are serial, not concurrent
+- RequestVote RPCs block and fail to return   [FIXED]
+- RequestVote RPCs are serial, not concurrent [FIXED]
 - LiveLocks and no leader is being elected
+
+2020/07/08 12:16:20 Node [0] Got reply from  1 {0 true}
+2020/07/08 12:16:20 Node [2] Got reply from  1 {0 true}
+
+A node is sending true in reply to multiple RequestVote calls. This should not happen, and as soon as a node has voted for someone, it should reject all subsequent request votes.
+
+2020/07/08 12:46:35 Node [0] Peer[1] says {0 true}
+2020/07/08 12:46:35 Node [2] Peer[1] says {0 true}
+
+* Why is Peer[1] replying `true` multiple times? Why is it not following the Figure2 Rules of Raft?
+
+- labgob warning: Decoding into a non-default variable/field Term may not work
+
+* I might have to re-tweak electionTimeout (or HeartBeatTimeout) again. It seems like there are too many candidates (which means too many nodes getting timed out within a short amount of time). This is not an unlikely scenaio and should ba handled on its own, but worth looking into why it happens. Perhaps the test is written to simulate such a case?

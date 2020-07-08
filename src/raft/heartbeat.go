@@ -26,19 +26,19 @@ import (
 
 // This will be launched as a Goroutine from Monitor (or main?)
 // Repeated heartbeats to all peers with a timeout
-func (rf *Raft) SendHeartBeats(currentTerm int) {
+func (rf *Raft) SendHeartBeats(currentTerm int, me int) {
 	heartBeatTimeOut := 100 * time.Millisecond
 	for {
-		rf.HeartBeat(currentTerm)
+		rf.HeartBeat(currentTerm, me)
 		time.Sleep(heartBeatTimeOut)
 	}
 }
 
-func (rf *Raft) HeartBeat(currentTerm int) {
+func (rf *Raft) HeartBeat(currentTerm int, me int) {
 	// log.Println(rf.me, "Sending out heartbeat...")
 	args := AppendEntryArgs{
 		Term:         currentTerm,
-		LeaderId:     rf.me,
+		LeaderId:     me,
 		PrevLogIndex: -1,
 		PrevLogTerm:  -1,
 		Entries:      []LogEntry{},
@@ -47,12 +47,14 @@ func (rf *Raft) HeartBeat(currentTerm int) {
 	reply := AppendEntryReply{}
 	for i := range rf.peers {
 		if i != rf.me {
-			ok := rf.sendAppendEntry(i, &args, &reply)
-			if ok {
+			go func(i int) {
 				rf.mu.Lock()
-				defer rf.mu.Unlock()
-				rf.lastUpdated = time.Now()
-			}
+				ok := rf.sendAppendEntry(i, &args, &reply)
+				if ok && reply.Success == true {
+					rf.lastUpdated = time.Now()
+				}
+				rf.mu.Unlock()
+			}(i)
 		}
 	}
 }

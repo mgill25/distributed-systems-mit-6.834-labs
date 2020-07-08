@@ -15,18 +15,10 @@ func (rf *Raft) GetElectionTimout() time.Duration {
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
-	var term int
-	var isleader bool
 	// Your code here (2A).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	term = rf.currentTerm
-	if rf.state == "leader" {
-		isleader = true
-	} else {
-		isleader = false
-	}
-	return term, isleader
+	return rf.currentTerm, rf.state == "Leader"
 }
 
 // isLogUpdated Check if the candidate's log is at least as up-to-date

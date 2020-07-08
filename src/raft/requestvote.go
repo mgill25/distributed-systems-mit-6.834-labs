@@ -1,6 +1,9 @@
 package raft
 
-import "log"
+import (
+	"log"
+	"time"
+)
 
 //
 // example RequestVote RPC arguments structure.
@@ -28,12 +31,10 @@ type RequestVoteReply struct {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	// log.Printf("Node [%d] %s\n", rf.me, "Inside RequestVote handler")
-	log.Printf("() Node [%d] %s: %s", rf.me, "whoami?", rf.state)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	log.Printf("Node [%d] %s", rf.me, "Inside requestvote.RequestVote()\n")
-	log.Printf("Node [%d] %s: %s", rf.me, "whoami?", rf.state)
+	// log.Printf("RV Handler Node [%d] Term [%d] State [%s]\n", rf.me, rf.currentTerm, rf.state)
 
 	// 1. Reply false if term < currentTerm
 	if args.Term < rf.currentTerm {
@@ -42,6 +43,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		// 2. If votedFor is null or CandidateId, and Candidate's log is at least
 		// as up to date as receiver's log, grant vote
 		reply.VoteGranted = true
+		rf.votedFor = args.CandidateId
 		// (Rules for Servers)
 		// If RPC request or response contains term T > currentTerm,
 		// set currentTerm = T, convert to follower
@@ -52,6 +54,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	} else {
 		reply.VoteGranted = false
 	}
-	log.Printf("Node [%d] %s", rf.me, "Quitting requestvote.RequestVote()\n")
+	rf.lastUpdated = time.Now()
+	log.Printf("RV END Node [%d] Term [%d] State [%s] VoteGranted [%v]\n", rf.me, rf.currentTerm, rf.state, reply.VoteGranted)
 	return
 }

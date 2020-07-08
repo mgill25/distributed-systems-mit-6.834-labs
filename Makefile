@@ -17,4 +17,4 @@ worker:
 	cd src/main && go run mrworker.go wc.so
 
 raft:
-	cd src/raft && go test -run 2A -race
+	cd src/raft && go test -run TestInitialElection2A -race
