@@ -22,19 +22,22 @@ This method will do a few things:
 
 func (rf *Raft) startElection() {
 	rf.mu.Lock()
+	log.Printf("Node [%d] election lock acquired", rf.me)
 
 	rf.electionUnderWay = true
 	rf.state = "Candidate"
 	rf.currentTerm += 1
 	rf.votedFor = rf.me
 	rf.lastUpdated = time.Now() // This is important as per the spec on Figure 2
+	// log.Printf("Node [%d] lastUpdated updated, timer reset!", rf.me)
 
-	log.Printf("Node [%d] Term [%d] %s", rf.me, rf.currentTerm, "Beginning Election\n")
+	// log.Printf("Node [%d] Term [%d] %s", rf.me, rf.currentTerm, "Beginning Election\n")
 
 	me := rf.me
 	currentTerm := rf.currentTerm
 
 	rf.mu.Unlock()
+	log.Printf("Node [%d] election lock released (midway)", me)
 
 	responseChan := make(chan int)
 	becomeFollower := false
@@ -51,10 +54,11 @@ func (rf *Raft) startElection() {
 			// log.Printf("Node [%d] %s %d\n", me, "Spawning sendRequestVote goroutine for peer", i)
 			go func(i int) {
 				ok := rf.sendRequestVote(i, &args, &reply) // might be unreliable
-				log.Printf("Node [%d] Peer[%d] says %v\n", me, i, reply)
+				// log.Printf("Node [%d] Peer[%d] says %v\n", me, i, reply)
 				if ok {
 					if reply.Term > currentTerm {
 						becomeFollower = true
+						responseChan <- 0
 					} else if reply.VoteGranted {
 						responseChan <- 1
 					} else {
@@ -76,14 +80,25 @@ func (rf *Raft) startElection() {
 		isLeader = true
 	}
 	rf.mu.Lock()
+	log.Printf("Node [%d] election lock acquired (midway)", rf.me)
 	if becomeFollower {
 		rf.state = "Follower"
-		log.Printf("Node [%d] %s", me, "Becoming Follower!\n")
-	} else if isLeader {
-		log.Printf("Node [%d] %s", me, "Becoming Leader!\n")
+		// log.Printf("Node [%d] %s", me, "Becoming Follower!\n")
+	} else if isLeader && rf.state == "Candidate" {
+		// log.Printf("Node [%d] %s", me, "Becoming Leader!\n")
 		rf.state = "Leader"
+	} else {
+		// log.Printf("Node [%d] Limbo. State = %v, isLeader = %v, becomeFollower = %v\n", me, rf.state, isLeader, becomeFollower)
+		// can't be the leader, didn't receive a greater term, so can't revert to follower
+		// essentially we tried to win the election, but lost.
+		// what do we do now?
+		// increment term and try again? because the problem is thus: we tried to win the election and lost,
+		// but *we are still a candidate*, which means nobody else won the election in the meanwhile either. That is messed up.
+		// Someone else should have won the election! Someone else must become leader, so we can become follower and move on.
 	}
 	rf.lastUpdated = time.Now()
+	// log.Printf("Node [%d] lastUpdated updated, timer reset!", me)
 	rf.mu.Unlock()
+	log.Printf("Node [%d] election lock released", me)
 	go rf.SendHeartBeats(currentTerm, me)
 }

@@ -52,7 +52,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.lastUpdated = time.Now()
 
 	// Launch a long running background worker which can trigger an election if needed
-	go rf.launchTriggerMonitor()
+	go rf.launchMonitor(me)
 
 	// TODO: When do we persist the state initially?
 	// rf.persist()

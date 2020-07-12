@@ -32,8 +32,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	// log.Printf("Node [%d] %s\n", rf.me, "Inside RequestVote handler")
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
+	me := rf.me
+	log.Printf("Node [%d] RequestVote RPC: lock acquired", rf.me)
 	// log.Printf("RV Handler Node [%d] Term [%d] State [%s]\n", rf.me, rf.currentTerm, rf.state)
 
 	// 1. Reply false if term < currentTerm
@@ -55,6 +55,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = false
 	}
 	rf.lastUpdated = time.Now()
-	log.Printf("RV END Node [%d] Term [%d] State [%s] VoteGranted [%v]\n", rf.me, rf.currentTerm, rf.state, reply.VoteGranted)
+	rf.mu.Unlock()
+	log.Printf("Node [%d] RequestVote RPC: lock released", me)
+	// log.Printf("Node [%d] lastUpdated updated, timer reset!", rf.me)
+	// log.Printf("RV END Node [%d] Term [%d] State [%s] VoteGranted [%v]\n", rf.me, rf.currentTerm, rf.state, reply.VoteGranted)
 	return
 }

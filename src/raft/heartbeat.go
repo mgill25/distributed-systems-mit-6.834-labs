@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"log"
 	"time"
 )
 
@@ -36,6 +37,7 @@ func (rf *Raft) SendHeartBeats(currentTerm int, me int) {
 
 func (rf *Raft) HeartBeat(currentTerm int, me int) {
 	// log.Println(rf.me, "Sending out heartbeat...")
+	rf.mu.Lock()
 	args := AppendEntryArgs{
 		Term:         currentTerm,
 		LeaderId:     me,
@@ -45,16 +47,50 @@ func (rf *Raft) HeartBeat(currentTerm int, me int) {
 		LeaderCommit: -1,
 	}
 	reply := AppendEntryReply{}
-	for i := range rf.peers {
-		if i != rf.me {
+	peers := rf.peers
+	rf.mu.Unlock()
+	termChan := make(chan int)
+	for i := range peers {
+		if i != me {
 			go func(i int) {
-				rf.mu.Lock()
+				log.Printf("Node [%d] Launched AE goroutine", me)
 				ok := rf.sendAppendEntry(i, &args, &reply)
 				if ok && reply.Success == true {
-					rf.lastUpdated = time.Now()
+					termChan <- reply.Term
+				} else {
+					termChan <- -1
 				}
-				rf.mu.Unlock()
 			}(i)
 		}
 	}
+	log.Printf("Node [%d] post-Heartbeat processing, lock acquired.\n", me)
+	/*
+		TODO: Figure out why this doesn't work
+			for term := range termChan {
+					log.Printf("Node [%d] reply.Term = %d\n", me, term)
+					if term > rf.currentTerm {
+						rf.currentTerm = term
+						rf.state = "Follower"
+					}
+			}
+	*/
+	rf.mu.Lock()
+	i := 0
+	for {
+		select {
+		case term := <-termChan:
+			log.Printf("Node [%d] reply.Term = %d\n", me, term)
+			if term > rf.currentTerm {
+				rf.currentTerm = term
+				rf.state = "Follower"
+			}
+			i += 1
+		}
+		if i == 2 {
+			break
+		}
+	}
+	rf.lastUpdated = time.Now()
+	rf.mu.Unlock()
+	log.Printf("Node [%d] post-Heartbeat processing, lock released", me)
 }

@@ -1,5 +1,8 @@
 # Brainstorming on Raft
 
+"The protocol is non-Byzantine". What does it mean?
+"Liveness"
+
 Command is appended to the replicated log!
 Perhaps, the Log Entry needs Command interface{}
 
