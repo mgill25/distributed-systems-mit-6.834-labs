@@ -173,7 +173,7 @@ type RequestVoteReply struct {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	log.Printf("node [%d] current votedFor = %d\n", rf.me, rf.votedFor)
+	log.Printf("node [%d] candidate = %d current votedFor = %d\n", rf.me, args.CandidateId, rf.votedFor)
 	if args.Term < rf.currentTerm {
 		reply.VoteGranted = false
 		reply.Term = rf.currentTerm
@@ -216,7 +216,7 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	rf.mu.Lock()
 	pid := os.Getpid()
 	rand.Seed(time.Now().UTC().UnixNano() * int64(rf.me) * int64(pid))
-	electionTimeout := time.Millisecond * time.Duration(rand.Intn(200)+500)
+	electionTimeout := time.Millisecond * time.Duration(rand.Intn(500)+500)
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		return
@@ -320,7 +320,7 @@ func (rf *Raft) runElection() {
 	me := rf.me
 	pid := os.Getpid()
 	rand.Seed(time.Now().UTC().UnixNano() * int64(me) * int64(pid))
-	electionTimeout := time.Millisecond * time.Duration(rand.Intn(200)+500)
+	electionTimeout := time.Millisecond * time.Duration(rand.Intn(500)+500)
 	rf.mu.Lock()
 	rf.timer = time.NewTimer(electionTimeout)
 	rf.mu.Unlock()
@@ -341,8 +341,7 @@ func (rf *Raft) runElection() {
 				term := rf.currentTerm
 				rf.mu.Unlock()
 				votes = 0
-				log.Printf("node [%d] is now leader. atomic vote counter = %d\n", me, votes)
-				log.Printf("[LEADER] term = %d\n", term)
+				log.Printf("node [%d] is now leader. Term %d\n", me, term)
 				rf.launchHeartbeats()
 			}
 		case <-rf.timer.C:
@@ -353,15 +352,13 @@ func (rf *Raft) runElection() {
 			rand.Seed(time.Now().UTC().UnixNano() * int64(me) * int64(pid))
 			electionTimeout := time.Millisecond * time.Duration(rand.Intn(500)+500)
 			rf.timer.Reset(electionTimeout)
+			currentTerm := rf.currentTerm
 			rf.mu.Unlock()
 			// log.Printf("node [%d] Started Election. Term = [%d]", me, currentTerm)
 			for peer := range rf.peers {
 				if peer == me {
 					continue
 				}
-				rf.mu.Lock()
-				currentTerm := rf.currentTerm
-				rf.mu.Unlock()
 				args := &RequestVoteArgs{
 					Term:         currentTerm,
 					CandidateId:  me,
@@ -425,7 +422,6 @@ func (rf *Raft) sendHeartbeats() {
 				// log.Printf("❤️  Heartbeat reply from peer [%d] : %v\n", peer, reply)
 				// if reply.Success {
 				rf.mu.Lock()
-				// log.Printf("node [%d] locked", me)
 				if rf.currentTerm < reply.Term {
 					log.Printf("node [%d] reverting back to Follower", me)
 					rf.currentTerm = reply.Term
@@ -433,7 +429,6 @@ func (rf *Raft) sendHeartbeats() {
 					rf.state = Follower
 				}
 				rf.mu.Unlock()
-				// log.Printf("node [%d] unlocked", me)
 				// }
 			}
 		}(peer)
