@@ -1,0 +1,28 @@
+cd src/raft && go test -run TestReElection2A -race
+Test (2A): election after network failure ...
+2020/07/12 21:17:30 node [1] candidate = 2 current votedFor = -1
+2020/07/12 21:17:30 node [0] candidate = 2 current votedFor = -1
+2020/07/12 21:17:30 node [2] is now leader. Term 1
+2020/07/12 21:17:31 node [0] candidate = 1 current votedFor = -1
+2020/07/12 21:17:31 node [1] candidate = 0 current votedFor = 1
+2020/07/12 21:17:32 node [0] candidate = 1 current votedFor = 0
+2020/07/12 21:17:32 node [1] candidate = 0 current votedFor = 1
+2020/07/12 21:17:33 node [0] candidate = 1 current votedFor = 0
+2020/07/12 21:17:33 node [1] candidate = 0 current votedFor = 1
+2020/07/12 21:17:34 Failed to get an RV response: network partition/timeout etc
+2020/07/12 21:17:34 node [0] candidate = 1 current votedFor = 0
+2020/07/12 21:17:34 node [1] candidate = 0 current votedFor = 1
+2020/07/12 21:17:34 Failed to get an RV response: network partition/timeout etc
+2020/07/12 21:17:34 node [0] candidate = 1 current votedFor = 0
+2020/07/12 21:17:34 Failed to get an RV response: network partition/timeout etc
+2020/07/12 21:17:35 node [1] candidate = 0 current votedFor = 1
+2020/07/12 21:17:35 node [0] candidate = 1 current votedFor = 0
+2020/07/12 21:17:35 Failed to get an RV response: network partition/timeout etc
+2020/07/12 21:17:35 node [1] candidate = 0 current votedFor = 1
+2020/07/12 21:17:35 node [0] candidate = 1 current votedFor = 0
+2020/07/12 21:17:36 Failed to get an RV response: network partition/timeout etc
+--- FAIL: TestReElection2A (6.12s)
+    config.go:330: expected one leader, got none
+FAIL
+exit status 1
+FAIL	_/Users/manishgill/Study/DistributedSystems/labs/6.824-golabs-2020/src/raft	6.406s
