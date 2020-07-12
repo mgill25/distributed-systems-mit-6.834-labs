@@ -172,6 +172,7 @@ type RequestVoteReply struct {
 // RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	log.Printf("node [%d] current votedFor = %d\n", rf.me, rf.votedFor)
 	if args.Term < rf.currentTerm {
 		reply.VoteGranted = false
@@ -180,7 +181,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.currentTerm = args.Term
 		rf.state = Follower
 	}
-	if rf.currentTerm == args.Term && (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.isLogUpdated() {
+	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.isLogUpdated() {
 		reply.VoteGranted = true
 		reply.Term = rf.currentTerm
 		rf.votedFor = args.CandidateId
@@ -189,7 +190,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 	// electionTimeout := time.Millisecond * time.Duration(rand.Intn(200)+500)
 	// rf.timer.Reset(electionTimeout)
-	rf.mu.Unlock()
 }
 
 func (rf *Raft) isLogUpdated() bool {
