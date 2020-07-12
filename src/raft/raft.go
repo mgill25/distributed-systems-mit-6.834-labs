@@ -173,10 +173,11 @@ type RequestVoteReply struct {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	log.Printf("node [%d] candidate = %d current votedFor = %d\n", rf.me, args.CandidateId, rf.votedFor)
+	// log.Printf("node [%d] candidate = %d current votedFor = %d\n", rf.me, args.CandidateId, rf.votedFor)
 	if args.Term < rf.currentTerm {
 		reply.VoteGranted = false
-		reply.Term = rf.currentTerm
+		// reply.Term = rf.currentTerm
+		return
 	} else if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
 		rf.state = Follower
@@ -185,6 +186,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = true
 		reply.Term = rf.currentTerm
 		rf.votedFor = args.CandidateId
+		log.Printf("node [%d] voting for = %d\n", rf.me, rf.votedFor)
 	} else {
 		reply.VoteGranted = false
 	}
@@ -226,6 +228,7 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 		rf.votedFor = -1
 	}
 	reply.Success = true
+	// log.Printf("node[%d] Resetting timeout to %v at %v\n", rf.me, electionTimeout, time.Now())
 	rf.timer.Reset(electionTimeout)
 	rf.mu.Unlock()
 }
@@ -346,11 +349,13 @@ func (rf *Raft) runElection() {
 			}
 		case <-rf.timer.C:
 			rf.mu.Lock()
+			// log.Printf("node[%d] timer elapsed at %v\n", rf.me, time.Now())
 			rf.state = Candidate
 			rf.currentTerm += 1
 			rf.votedFor = me
 			rand.Seed(time.Now().UTC().UnixNano() * int64(me) * int64(pid))
 			electionTimeout := time.Millisecond * time.Duration(rand.Intn(500)+500)
+			// log.Printf("node[%d] Resetting timeout to %v at %v\n", rf.me, electionTimeout, time.Now())
 			rf.timer.Reset(electionTimeout)
 			currentTerm := rf.currentTerm
 			rf.mu.Unlock()
