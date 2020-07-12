@@ -18,3 +18,7 @@ worker:
 
 raft:
 	cd src/raft && go test -run TestInitialElection2A -race
+
+# Re-election
+reel:
+	cd src/raft && go test -run TestReElection2A -race

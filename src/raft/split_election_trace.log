@@ -1,0 +1,34 @@
+// Possible Split Election Failure Trace
+❯ make raft
+cd src/raft && go test -run TestInitialElection2A -race
+Test (2A): initial election ...
+2020/07/12 19:07:27 node [2] Started Election
+2020/07/12 19:07:27 node [0] Started Election
+2020/07/12 19:07:27 node [2] got vote by peer [1]!
+2020/07/12 19:07:27 node [1] Started Election
+2020/07/12 19:07:27 node [0] Started Election
+2020/07/12 19:07:27 node [2] Started Election
+2020/07/12 19:07:27 node [1] Started Election
+2020/07/12 19:07:28 node [0] Started Election
+2020/07/12 19:07:28 node [2] Started Election
+2020/07/12 19:07:28 node [1] Started Election
+2020/07/12 19:07:28 node [0] Started Election
+2020/07/12 19:07:28 node [2] Started Election
+2020/07/12 19:07:28 node [1] Started Election
+2020/07/12 19:07:29 node [0] Started Election
+2020/07/12 19:07:29 node [2] Started Election
+2020/07/12 19:07:29 node [1] Started Election
+2020/07/12 19:07:29 node [2] Started Election
+2020/07/12 19:07:29 node [0] Started Election
+2020/07/12 19:07:30 node [1] Started Election
+2020/07/12 19:07:30 node [2] Started Election
+2020/07/12 19:07:30 node [0] Started Election
+2020/07/12 19:07:30 node [1] Started Election
+2020/07/12 19:07:30 node [2] Started Election
+2020/07/12 19:07:31 node [0] Started Election
+--- FAIL: TestInitialElection2A (4.86s)
+    config.go:330: expected one leader, got none
+FAIL
+exit status 1
+FAIL    _/Users/manishgill/Study/DistributedSystems/labs/6.824_orig/src/raft    4.941s
+make: *** [raft] Error 1
