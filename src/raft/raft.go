@@ -364,14 +364,14 @@ func (rf *Raft) runElection() {
 				if peer == me {
 					continue
 				}
-				args := &RequestVoteArgs{
-					Term:         currentTerm,
-					CandidateId:  me,
-					LastLogIndex: -1,
-					LastLogTerm:  -1,
-				}
-				reply := &RequestVoteReply{}
 				go func(peer int, voteChan chan uint64) {
+					args := &RequestVoteArgs{
+						Term:         currentTerm,
+						CandidateId:  me,
+						LastLogIndex: -1,
+						LastLogTerm:  -1,
+					}
+					reply := &RequestVoteReply{}
 					ok := rf.sendRequestVote(peer, args, reply)
 					if ok {
 						if reply.VoteGranted {
