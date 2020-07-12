@@ -178,7 +178,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = false
 		// reply.Term = rf.currentTerm
 		return
-	} else if args.Term > rf.currentTerm {
+	} else if args.Term >= rf.currentTerm {
 		rf.currentTerm = args.Term
 		rf.state = Follower
 	}
@@ -186,12 +186,18 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = true
 		reply.Term = rf.currentTerm
 		rf.votedFor = args.CandidateId
+		pid := os.Getpid()
+		rand.Seed(time.Now().UTC().UnixNano() * int64(rf.me) * int64(pid))
+		electionTimeout := time.Millisecond * time.Duration(rand.Intn(500)+500)
+		// FIXME: look into possible timer concurrency issue as per go docs
+		if !rf.timer.Stop() {
+			<-rf.timer.C
+		}
+		rf.timer.Reset(electionTimeout)
 		log.Printf("node [%d] voting for = %d\n", rf.me, rf.votedFor)
 	} else {
 		reply.VoteGranted = false
 	}
-	// electionTimeout := time.Millisecond * time.Duration(rand.Intn(200)+500)
-	// rf.timer.Reset(electionTimeout)
 }
 
 func (rf *Raft) isLogUpdated() bool {
@@ -226,10 +232,13 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 		rf.currentTerm = args.Term
 		rf.state = Follower
 		rf.votedFor = -1
+		if !rf.timer.Stop() {
+			<-rf.timer.C
+		}
+		rf.timer.Reset(electionTimeout)
 	}
 	reply.Success = true
 	// log.Printf("node[%d] Resetting timeout to %v at %v\n", rf.me, electionTimeout, time.Now())
-	rf.timer.Reset(electionTimeout)
 	rf.mu.Unlock()
 }
 
@@ -389,8 +398,6 @@ func (rf *Raft) runElection() {
 							// log.Printf("node [%d] RV reply = %v\n", me, reply)
 							voteChan <- 0
 						}
-					} else {
-						log.Printf("Failed to get an RV response: network partition/timeout etc")
 					}
 				}(peer, voteChan)
 			}
