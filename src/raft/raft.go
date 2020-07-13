@@ -89,10 +89,8 @@ type Raft struct {
 	matchIndex []int
 
 	// Internal
-	state     ServerState
-	lastSeen  time.Duration
-	timer     *time.Timer
-	heartBeat *time.Timer
+	state ServerState
+	timer *time.Timer
 }
 
 // return currentTerm and whether this server
