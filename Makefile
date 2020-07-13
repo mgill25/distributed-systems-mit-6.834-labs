@@ -1,3 +1,5 @@
+raft_test=cd src/raft && go test -race -run
+
 .PHONY: build
 build:
 	cd src/main && go build -buildmode=plugin ../mrapps/wc.go
@@ -16,12 +18,28 @@ master: build _master
 worker:
 	cd src/main && go run mrworker.go wc.so
 
-raft:
-	cd src/raft && go test -run TestInitialElection2A -race
-
+# Raft
+leader:
+	$(raft_test) TestInitialElection2A
 # Re-election
 reel:
-	cd src/raft && go test -run TestReElection2A -race
-
+	$(raft_test) TestReElection2A
 raftall:
-	cd src/raft && go test -run 2A -race
+	$(raft_test) 2A
+# Agreement
+b1:
+	$(raft_test) TestBasicAgree2B
+b2:
+	$(raft_test) TestRPCBytes2B
+b3:
+	$(raft_test) TestFailAgree2B
+b4:
+	$(raft_test) TestFailNoAgree2B
+b5:
+	$(raft_test) TestConcurrentStarts2B
+b6:
+	$(raft_test) TestRejoin2B
+b7:
+	$(raft_test) TestBackup2B
+append:
+	$(raft_test) 2B
