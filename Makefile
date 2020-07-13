@@ -22,3 +22,6 @@ raft:
 # Re-election
 reel:
 	cd src/raft && go test -run TestReElection2A -race
+
+raftall:
+	cd src/raft && go test -run 2A -race

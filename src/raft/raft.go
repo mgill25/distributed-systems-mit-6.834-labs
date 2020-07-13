@@ -98,13 +98,13 @@ type Raft struct {
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
-
 	var term int
 	var isleader bool
 	// Your code here (2A).
 	rf.mu.Lock()
 	term = rf.currentTerm
 	isleader = rf.state == Leader
+	// log.Printf("node [%d] GetState term = %d state = %s", rf.me, term, rf.state)
 	rf.mu.Unlock()
 	return term, isleader
 }
@@ -173,14 +173,13 @@ type RequestVoteReply struct {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	// log.Printf("node [%d] candidate = %d current votedFor = %d\n", rf.me, args.CandidateId, rf.votedFor)
 	if args.Term < rf.currentTerm {
 		reply.VoteGranted = false
-		// reply.Term = rf.currentTerm
 		return
 	} else if args.Term >= rf.currentTerm {
 		rf.currentTerm = args.Term
 		rf.state = Follower
+		rf.votedFor = -1
 	}
 	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.isLogUpdated() {
 		reply.VoteGranted = true
@@ -189,12 +188,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		pid := os.Getpid()
 		rand.Seed(time.Now().UTC().UnixNano() * int64(rf.me) * int64(pid))
 		electionTimeout := time.Millisecond * time.Duration(rand.Intn(500)+500)
-		// FIXME: look into possible timer concurrency issue as per go docs
 		if !rf.timer.Stop() {
 			<-rf.timer.C
 		}
 		rf.timer.Reset(electionTimeout)
-		log.Printf("node [%d] voting for = %d\n", rf.me, rf.votedFor)
+		// log.Printf("node [%d] voting for = %d. timer reset\n", rf.me, rf.votedFor)
 	} else {
 		reply.VoteGranted = false
 	}
@@ -222,6 +220,7 @@ type AppendEntryReply struct {
 func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	// Your code here (2A, 2B)
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	pid := os.Getpid()
 	rand.Seed(time.Now().UTC().UnixNano() * int64(rf.me) * int64(pid))
 	electionTimeout := time.Millisecond * time.Duration(rand.Intn(500)+500)
@@ -236,10 +235,9 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 			<-rf.timer.C
 		}
 		rf.timer.Reset(electionTimeout)
+		reply.Success = true
 	}
-	reply.Success = true
 	// log.Printf("node[%d] Resetting timeout to %v at %v\n", rf.me, electionTimeout, time.Now())
-	rf.mu.Unlock()
 }
 
 //
@@ -382,6 +380,7 @@ func (rf *Raft) runElection() {
 					}
 					reply := &RequestVoteReply{}
 					ok := rf.sendRequestVote(peer, args, reply)
+					// log.Printf("node[%d] sendRequestVote to peer=%d, reply=%v", me, peer, reply)
 					if ok {
 						if reply.VoteGranted {
 							// log.Printf("node [%d] got vote by peer [%d]!", me, peer)
@@ -412,9 +411,9 @@ func (rf *Raft) sendHeartbeats() {
 	currentTerm := rf.currentTerm
 	rf.mu.Unlock()
 	if state != Leader {
-		log.Printf("node [%d] Not a leader, we cannot send heartbeats!", me)
 		return
 	}
+	// log.Printf("leader [%d] sending heartbeats. term: %d", me, currentTerm)
 	for peer := range rf.peers {
 		if peer == me {
 			continue
@@ -435,7 +434,7 @@ func (rf *Raft) sendHeartbeats() {
 				// if reply.Success {
 				rf.mu.Lock()
 				if rf.currentTerm < reply.Term {
-					log.Printf("node [%d] reverting back to Follower", me)
+					log.Printf("node [%d] reverting back to Follower (heartbeats)", me)
 					rf.currentTerm = reply.Term
 					rf.votedFor = -1
 					rf.state = Follower
