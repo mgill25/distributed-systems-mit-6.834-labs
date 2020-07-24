@@ -238,8 +238,13 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 		reply.Term = rf.currentTerm
 		return
 	} else if args.Term >= rf.currentTerm {
+		rf.convertToFollower(args.Term)
+		if !rf.timer.Stop() {
+			<-rf.timer.C
+		}
+		rf.timer.Reset(electionTimeout)
+
 		var overWritten bool
-		// Debug(rf, "prev(index, term) = (%d, %d). log len = %d", args.PrevLogIndex, args.PrevLogTerm, len(rf.log))
 		if args.PrevLogIndex > 0 && rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 			Error(rf, "Rejecting AE. Log Matching Property Fail")
 			reply.Success = false
@@ -247,37 +252,30 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 			return
 		}
 
+		if args.LeaderCommit > rf.commitIndex {
+			rf.commitIndex = Min(args.LeaderCommit, rf.getLastLogIndex())
+			Warn(rf, "Follower update its commitIndex to %d", rf.commitIndex)
+		}
+
 		if args.Entries != nil {
-			// Debug(rf, "entries = %v", args.Entries)
 			conflictIndex := -1
 			// Loop through the entries and check for Index at each location in log
-			i := 0
-			for {
-				if i >= len(args.Entries) {
-					break
-				}
+			for i := 0; i < len(args.Entries); i++ {
 				currentEntry := args.Entries[i]
 				currentEntryIndex := currentEntry.Index
 				if len(rf.log) > currentEntryIndex {
-					// Debug(rf, "log len = %d, currentEntryIndex = %d", len(rf.log), currentEntryIndex)
 					if rf.log[currentEntryIndex].Term != currentEntry.Term {
 						conflictIndex = currentEntryIndex
 						break
 					}
 				}
-				i += 1
 			}
-
 			if conflictIndex != -1 {
 				// Delete the conflict index and everything after it.
 				rf.log = rf.log[:conflictIndex]
 				Warn(rf, "Conflicting entries deleted from %d", conflictIndex)
 				overWritten = true
 			} else {
-				Debug(rf, ">>> Follower Trying to Append <<<")
-				Debug(rf, ">>> Log = %+v", rf.log)
-				Debug(rf, ">>> ToAppend = %+v", args.Entries)
-				// rf.log = append(rf.log, args.Entries...)
 				// As per spec: Append any new Entries not already in the Log!
 				// Detect if there are same entries in the log as args.Entries
 				// and if yes, ignore them
@@ -286,9 +284,7 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 					entry := args.Entries[i]
 					logIdx := entry.Index
 					logTrm := entry.Term
-					if len(rf.log) > logIdx && rf.log[logIdx].Term == logTrm {
-						continue
-					} else {
+					if len(rf.log) <= logIdx || rf.log[logIdx].Term != logTrm {
 						toAppend = append(toAppend, entry)
 					}
 				}
@@ -297,81 +293,16 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 			}
 
 		}
-		if args.LeaderCommit > rf.commitIndex {
-			rf.commitIndex = Min(args.LeaderCommit, rf.getLastLogIndex())
-			Warn(rf, "Follower update its commitIndex to %d", rf.commitIndex)
-		}
 		rf.applyLogEntries(args.Entries)
-		rf.convertToFollower(args.Term)
-
-		if !rf.timer.Stop() {
-			<-rf.timer.C
-		}
-		rf.timer.Reset(electionTimeout)
-
 		reply.Success = !overWritten
 	}
 	// log.Printf("node[%d] Resetting timeout to %v at %v\n", rf.me, electionTimeout, time.Now())
-}
-
-//
-// example code to send a RequestVote RPC to a server.
-// server is the index of the target server in rf.peers[].
-// expects RPC arguments in args.
-// fills in *reply with RPC reply, so caller should
-// pass &reply.
-// the types of the args and reply passed to Call() must be
-// the same as the types of the arguments declared in the
-// handler function (including whether they are pointers).
-//
-// The labrpc package simulates a lossy network, in which servers
-// may be unreachable, and in which requests and replies may be lost.
-// Call() sends a request and waits for a reply. If a reply arrives
-// within a timeout interval, Call() returns true; otherwise
-// Call() returns false. Thus Call() may not return for a while.
-// A false return can be caused by a dead server, a live server that
-// can't be reached, a lost request, or a lost reply.
-//
-// Call() is guaranteed to return (perhaps after a delay) *except* if the
-// handler function on the server side does not return.  Thus there
-// is no need to implement your own timeouts around Call().
-//
-// look at the comments in ../labrpc/labrpc.go for more details.
-//
-// if you're having trouble getting RPC to work, check that you've
-// capitalized all field names in structs passed over RPC, and
-// that the caller passes the address of the reply struct with &, not
-// the struct itself.
-//
-func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	return ok
-}
-
-// call AppendEntry
-func (rf *Raft) sendAppendEntry(server int, args *AppendEntryArgs, reply *AppendEntryReply) bool {
-	ok := rf.peers[server].Call("Raft.AppendEntry", args, reply)
-	return ok
 }
 
 func (rf *Raft) getLastLogIndex() int {
 	return len(rf.log) - 1
 }
 
-//
-// the service using Raft (e.g. a k/v server) wants to start
-// agreement on the next command to be appended to Raft's log. if this
-// server isn't the leader, returns false. otherwise start the
-// agreement and return immediately. there is no guarantee that this
-// command will ever be committed to the Raft log, since the leader
-// may fail or lose an election. even if the Raft instance has been killed,
-// this function should return gracefully.
-//
-// the first return value is the index that the command will appear at
-// if it's ever committed. the second return value is the current
-// term. the third return value is true if this server believes it is
-// the leader.
-//
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	term, isLeader := rf.GetState()
 	if !isLeader {
@@ -542,18 +473,13 @@ func (rf *Raft) sendAEToPeer(peer, me, currentTerm, prevLogIndex, prevLogTerm in
 		rf.convertToFollower(reply.Term)
 	}
 
-	if ok && reply.Success {
-		if entries != nil {
+	if entries != nil {
+		if ok && reply.Success {
 			rf.nextIndex[peer] += len(entries)
 			rf.matchIndex[peer] = entries[len(entries)-1].Index
-		}
-	} else {
-		if entries != nil {
-			// TODO: This if check might be a hack. Dunno
-			if rf.nextIndex[peer] > 1 {
-				rf.nextIndex[peer] -= 1
-				Warn(rf, "Decreased nextIndex for peer %d, new nextIndex = %v", peer, rf.nextIndex)
-			}
+		} else if ok && !reply.Success && rf.nextIndex[peer] > 1 {
+			rf.nextIndex[peer] -= 1
+			Warn(rf, "Decreased nextIndex for peer %d, new nextIndex = %v", peer, rf.nextIndex)
 		}
 	}
 	// update commitIndex if we have replicated to the majority
@@ -576,21 +502,12 @@ func (rf *Raft) applyLogEntries(entries []LogEntry) {
 				CommandValid: true,
 				CommandIndex: entry.Index,
 			}
-			Info(rf, "Applied %+v", msg)
+			// Info(rf, "Applied %+v", msg)
 			rf.applyCh <- msg
 		} else {
 			break
 		}
 	}
-	// for _, entry := range entries {
-	//     entry := entries[len(entries)-1-rf.lastApplied]
-	//     msg := ApplyMsg{
-	//         Command:      entry.Command,
-	//         CommandValid: true,
-	//         CommandIndex: entry.Index,
-	//     }
-	//     rf.applyCh <- msg
-	// }
 }
 
 // XXX: Call site must have the Lock
