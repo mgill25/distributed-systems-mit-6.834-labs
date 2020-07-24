@@ -50,7 +50,7 @@ var (
 func Color(colorString string) func(*Raft, string, string, ...interface{}) string {
 	sprint := func(rf *Raft, mode string, format string, args ...interface{}) string {
 		args = append([]interface{}{rf.me, rf.currentTerm, rf.state}, args...)
-		str := fmt.Sprintf("[%s]", mode)
+		str := fmt.Sprintf("[%-5.5s]", mode)
 		str += " [Node: %d | Term: %d | %10.10v] " + format
 		formatString := fmt.Sprintf(str, args...)
 		return fmt.Sprintf(colorString, formatString)
