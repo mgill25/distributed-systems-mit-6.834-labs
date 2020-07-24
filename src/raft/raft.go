@@ -274,23 +274,34 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 				Warn(rf, "Conflicting entries deleted from %d", conflictIndex)
 				overWritten = true
 			} else {
-				rf.log = append(rf.log, args.Entries...)
-				// Debug(rf, "Follower log appended. Log = %v", rf.log)
-				for _, entry := range args.Entries {
-					msg := ApplyMsg{
-						Command:      entry.Command,
-						CommandValid: true,
-						CommandIndex: entry.Index,
+				Debug(rf, ">>> Follower Trying to Append <<<")
+				Debug(rf, ">>> Log = %+v", rf.log)
+				Debug(rf, ">>> ToAppend = %+v", args.Entries)
+				// rf.log = append(rf.log, args.Entries...)
+				// As per spec: Append any new Entries not already in the Log!
+				// Detect if there are same entries in the log as args.Entries
+				// and if yes, ignore them
+				toAppend := []LogEntry{}
+				for i := 0; i < len(args.Entries); i++ {
+					entry := args.Entries[i]
+					logIdx := entry.Index
+					logTrm := entry.Term
+					if len(rf.log) > logIdx && rf.log[logIdx].Term == logTrm {
+						continue
+					} else {
+						toAppend = append(toAppend, entry)
 					}
-					rf.applyCh <- msg
 				}
+				rf.log = append(rf.log, toAppend...)
+				Debug(rf, "Appended %d entries to log", len(toAppend))
 			}
 
-			if args.LeaderCommit > rf.commitIndex {
-				rf.commitIndex = Min(args.LeaderCommit, rf.getLastLogIndex())
-			}
 		}
-
+		if args.LeaderCommit > rf.commitIndex {
+			rf.commitIndex = Min(args.LeaderCommit, rf.getLastLogIndex())
+			Warn(rf, "Follower update its commitIndex to %d", rf.commitIndex)
+		}
+		rf.applyLogEntries(args.Entries)
 		rf.convertToFollower(args.Term)
 
 		if !rf.timer.Stop() {
@@ -375,13 +386,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:    term,
 	}
 	rf.log = append(rf.log, entry)
-	Info(rf, "New entry appended. Log Len = %d, newEntryIndex = %d", len(rf.log), newEntryIndex)
-	msg := ApplyMsg{
-		Command:      command,
-		CommandValid: true,
-		CommandIndex: newEntryIndex,
-	}
-	rf.applyCh <- msg
+	rf.nextIndex[rf.me] += 1
+	rf.matchIndex[rf.me] += 1
+	Debug(rf, "New entry appended. Log Len = %d, newEntryIndex = %d", len(rf.log), newEntryIndex)
 	return newEntryIndex, term, isLeader
 }
 
@@ -443,6 +450,7 @@ func (rf *Raft) runElection() {
 			electionTimeout := time.Millisecond * time.Duration(rand.Intn(500)+500)
 			rf.timer.Reset(electionTimeout)
 			currentTerm := rf.currentTerm
+			Warn(rf, "Election has been started")
 			rf.mu.Unlock()
 			for peer := range rf.peers {
 				if peer == me {
@@ -476,7 +484,6 @@ func (rf *Raft) runElection() {
 }
 
 /**
-
 Used for dual purpose:
 	a. heartbeats
 	b. log replication
@@ -493,10 +500,10 @@ func (rf *Raft) sendAE() {
 	}
 
 	for peer := range rf.peers {
+		// we are about to install a real entry
 		if peer == me {
 			continue
 		}
-		// we are about to install a real entry
 		var prevLogIndex int
 		var prevLogTerm int
 		var entries []LogEntry
@@ -527,7 +534,6 @@ func (rf *Raft) sendAEToPeer(peer, me, currentTerm, prevLogIndex, prevLogTerm in
 		LeaderCommit: leaderCommit,
 	}
 	reply := &AppendEntryReply{}
-
 	ok := rf.sendAppendEntry(peer, args, reply)
 
 	rf.mu.Lock()
@@ -538,21 +544,86 @@ func (rf *Raft) sendAEToPeer(peer, me, currentTerm, prevLogIndex, prevLogTerm in
 
 	if ok && reply.Success {
 		if entries != nil {
-			// TODO: Is this correct?
-			// Maybe. Maybe Not. Maybe Fuck you.
 			rf.nextIndex[peer] += len(entries)
-			Debug(rf, "Incremented nextIndex[%d] to %d", peer, rf.nextIndex[peer])
+			rf.matchIndex[peer] = entries[len(entries)-1].Index
 		}
 	} else {
 		if entries != nil {
 			// TODO: This if check might be a hack. Dunno
 			if rf.nextIndex[peer] > 1 {
-				Warn(rf, "Decrementing nextIndex for peer %d, new nextIndex = %v", peer, rf.nextIndex)
 				rf.nextIndex[peer] -= 1
+				Warn(rf, "Decreased nextIndex for peer %d, new nextIndex = %v", peer, rf.nextIndex)
 			}
 		}
 	}
+	// update commitIndex if we have replicated to the majority
+	rf.updateCommitIndex()
+	if entries != nil {
+		rf.applyLogEntries(entries)
+	}
 	rf.mu.Unlock()
+}
+
+// Apply Log Entries: This means sending msgs over the applyCh
+// Caution: Must only send the "committed" entries!
+func (rf *Raft) applyLogEntries(entries []LogEntry) {
+	for {
+		if rf.commitIndex > rf.lastApplied {
+			rf.lastApplied++
+			entry := rf.log[rf.lastApplied]
+			msg := ApplyMsg{
+				Command:      entry.Command,
+				CommandValid: true,
+				CommandIndex: entry.Index,
+			}
+			Info(rf, "Applied %+v", msg)
+			rf.applyCh <- msg
+		} else {
+			break
+		}
+	}
+	// for _, entry := range entries {
+	//     entry := entries[len(entries)-1-rf.lastApplied]
+	//     msg := ApplyMsg{
+	//         Command:      entry.Command,
+	//         CommandValid: true,
+	//         CommandIndex: entry.Index,
+	//     }
+	//     rf.applyCh <- msg
+	// }
+}
+
+// XXX: Call site must have the Lock
+// Last rule for the Leader as per Figure 2
+func (rf *Raft) updateCommitIndex() {
+	// majority of matchIndex[i] must be >= N
+	minMatch := rf.matchIndex[0]
+	for i := 1; i < len(rf.matchIndex); i++ {
+		if rf.matchIndex[i] < minMatch {
+			minMatch = rf.matchIndex[i]
+		}
+	}
+
+	majorityRequired := (len(rf.matchIndex) / 2) + 1
+	for j := minMatch; j < len(rf.log); j++ {
+		if j <= rf.commitIndex {
+			continue
+		}
+		if rf.log[j].Term != rf.currentTerm {
+			continue
+		}
+		// majority of matchIndex[] should be >= j
+		count := 0
+		for k := 0; k < len(rf.matchIndex); k++ {
+			if rf.matchIndex[k] >= j {
+				count++
+			}
+			if count == majorityRequired {
+				rf.commitIndex = j
+				break
+			}
+		}
+	}
 }
 
 // ~~~~~~ heartbeats ~~~~~
