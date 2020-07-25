@@ -232,10 +232,11 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	pid := os.Getpid()
 	rand.Seed(time.Now().UTC().UnixNano() * int64(rf.me) * int64(pid))
 	electionTimeout := time.Millisecond * time.Duration(rand.Intn(500)+500)
+	// Debug(rf, "AE args = %+v\n", args)
+	reply.Term = rf.currentTerm
 	if args.Term < rf.currentTerm {
 		Error(rf, "Rejecting AE: Incoming Term %d < my current Term %d", args.Term, rf.currentTerm)
 		reply.Success = false
-		reply.Term = rf.currentTerm
 		return
 	} else if args.Term >= rf.currentTerm {
 		rf.convertToFollower(args.Term)
@@ -244,19 +245,22 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 		}
 		rf.timer.Reset(electionTimeout)
 
-		var overWritten bool
+		// Debug(rf, "args.PrevLogIndex = %d, len(log) = %d", args.PrevLogIndex, len(rf.log))
+		if args.PrevLogIndex >= len(rf.log) {
+			reply.Success = false
+			return
+		}
 		if args.PrevLogIndex > 0 && rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 			Error(rf, "Rejecting AE. Log Matching Property Fail")
 			reply.Success = false
-			reply.Term = rf.currentTerm
 			return
 		}
 
 		if args.LeaderCommit > rf.commitIndex {
 			rf.commitIndex = Min(args.LeaderCommit, rf.getLastLogIndex())
-			Warn(rf, "Follower update its commitIndex to %d", rf.commitIndex)
 		}
 
+		var overWritten bool
 		if args.Entries != nil {
 			conflictIndex := -1
 			// Loop through the entries and check for Index at each location in log
@@ -286,10 +290,11 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 					logTrm := entry.Term
 					if len(rf.log) <= logIdx || rf.log[logIdx].Term != logTrm {
 						toAppend = append(toAppend, entry)
+					} else {
+						Warn(rf, "Duplicate detected and ignored: %+v", entry)
 					}
 				}
 				rf.log = append(rf.log, toAppend...)
-				Debug(rf, "Appended %d entries to log", len(toAppend))
 			}
 
 		}
@@ -319,7 +324,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.log = append(rf.log, entry)
 	rf.nextIndex[rf.me] += 1
 	rf.matchIndex[rf.me] += 1
-	Debug(rf, "New entry appended. Log Len = %d, newEntryIndex = %d", len(rf.log), newEntryIndex)
+	Info(rf, "New entry appended: %+v", entry)
 	return newEntryIndex, term, isLeader
 }
 
@@ -367,9 +372,10 @@ func (rf *Raft) runElection() {
 			if votes >= uint64(votesRequired) {
 				rf.mu.Lock()
 				rf.state = Leader
-				rf.mu.Unlock()
 				votes = 0
-				Info(rf, "Won election")
+				rf.initIndexMaps()
+				Info(rf, "Won election, nextIndex = %v", rf.nextIndex)
+				rf.mu.Unlock()
 				rf.launchHeartbeats()
 			}
 		case <-rf.timer.C:
@@ -475,12 +481,13 @@ func (rf *Raft) sendAEToPeer(peer, me, currentTerm, prevLogIndex, prevLogTerm in
 
 	if entries != nil {
 		if ok && reply.Success {
-			rf.nextIndex[peer] += len(entries)
-			rf.matchIndex[peer] = entries[len(entries)-1].Index
+			rf.nextIndex[peer] = rf.nextIndex[peer] + len(entries)
+			rf.matchIndex[peer] = args.PrevLogIndex + len(entries)
+			// rf.matchIndex[peer] = entries[len(entries)-1].Index
 		} else if ok && !reply.Success && rf.nextIndex[peer] > 1 {
 			rf.nextIndex[peer] -= 1
-			Warn(rf, "Decreased nextIndex for peer %d, new nextIndex = %v", peer, rf.nextIndex)
 		}
+		Debug(rf, "nextIndex[%d] = %+v", peer, rf.nextIndex[peer])
 	}
 	// update commitIndex if we have replicated to the majority
 	rf.updateCommitIndex()
@@ -502,7 +509,7 @@ func (rf *Raft) applyLogEntries(entries []LogEntry) {
 				CommandValid: true,
 				CommandIndex: entry.Index,
 			}
-			// Info(rf, "Applied %+v", msg)
+			Info(rf, "Applied %+v", msg)
 			rf.applyCh <- msg
 		} else {
 			break
@@ -553,6 +560,18 @@ func (rf *Raft) launchHeartbeats() {
 	}
 }
 
+// Initialize nextIndex and matchIndex
+// Happens after every Election @ Leader
+func (rf *Raft) initIndexMaps() {
+	rf.nextIndex = []int{}
+	rf.matchIndex = []int{}
+	totalServers := len(rf.peers)
+	for server := 0; server < totalServers; server++ {
+		rf.nextIndex = append(rf.nextIndex, rf.getLastLogIndex()+1)
+		rf.matchIndex = append(rf.matchIndex, 0)
+	}
+}
+
 //
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
@@ -582,14 +601,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.nextIndex = []int{}
 	rf.matchIndex = []int{}
 
-	totalServers := len(rf.peers)
-	for server := 0; server < totalServers; server++ {
-		rf.nextIndex = append(rf.nextIndex, rf.getLastLogIndex()+1)
-		rf.matchIndex = append(rf.matchIndex, 0)
-	}
-
 	rf.state = Follower
 	rf.applyCh = applyCh
+
+	rf.initIndexMaps()
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
