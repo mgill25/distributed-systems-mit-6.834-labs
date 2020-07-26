@@ -322,8 +322,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:    term,
 	}
 	rf.log = append(rf.log, entry)
-	rf.nextIndex[rf.me] += 1
-	rf.matchIndex[rf.me] += 1
 	Info(rf, "New entry appended: %+v", entry)
 	return newEntryIndex, term, isLeader
 }
@@ -471,8 +469,8 @@ func (rf *Raft) sendAEToPeer(peer, me, currentTerm, prevLogIndex, prevLogTerm in
 		LeaderCommit: leaderCommit,
 	}
 	reply := &AppendEntryReply{}
-	ok := rf.sendAppendEntry(peer, args, reply)
 
+	ok := rf.sendAppendEntry(peer, args, reply)
 	rf.mu.Lock()
 
 	if ok && rf.currentTerm < reply.Term {
@@ -487,7 +485,6 @@ func (rf *Raft) sendAEToPeer(peer, me, currentTerm, prevLogIndex, prevLogTerm in
 		} else if ok && !reply.Success && rf.nextIndex[peer] > 1 {
 			rf.nextIndex[peer] -= 1
 		}
-		Debug(rf, "nextIndex[%d] = %+v", peer, rf.nextIndex[peer])
 	}
 	// update commitIndex if we have replicated to the majority
 	rf.updateCommitIndex()
@@ -537,7 +534,7 @@ func (rf *Raft) updateCommitIndex() {
 			continue
 		}
 		// majority of matchIndex[] should be >= j
-		count := 0
+		count := 1
 		for k := 0; k < len(rf.matchIndex); k++ {
 			if rf.matchIndex[k] >= j {
 				count++

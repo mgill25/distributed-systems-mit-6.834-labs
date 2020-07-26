@@ -377,6 +377,7 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 		// fmt.Printf("log[%d] = %+v\n", i, cfg.logs[i])
 		cmd1, ok := cfg.logs[i][index]
 		// fmt.Printf("log = %+v, index: %d, cmd, i = %d, cmd1 = %d\n", cfg.logs, index, i, cmd1)
+		// fmt.Printf("current log = %+v, command at index %d = %+v\n", cfg.logs[i], index, cmd1)
 		// fmt.Printf("cmd1 = %d\n", cmd1)
 		cfg.mu.Unlock()
 
