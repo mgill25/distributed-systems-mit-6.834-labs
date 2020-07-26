@@ -256,10 +256,6 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 			return
 		}
 
-		if args.LeaderCommit > rf.commitIndex {
-			rf.commitIndex = Min(args.LeaderCommit, rf.getLastLogIndex())
-		}
-
 		var overWritten bool
 		if args.Entries != nil {
 			conflictIndex := -1
@@ -298,6 +294,12 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 			}
 
 		}
+
+		if args.LeaderCommit > rf.commitIndex {
+			rf.commitIndex = Min(args.LeaderCommit, rf.getLastLogIndex())
+			Warn(rf, "commitIndex updated = %d. min(%d, %d)", rf.commitIndex, args.LeaderCommit, rf.getLastLogIndex())
+		}
+
 		rf.applyLogEntries(args.Entries)
 		reply.Success = !overWritten
 	}
@@ -445,13 +447,11 @@ func (rf *Raft) sendAE() {
 		rf.mu.Lock()
 		lastLogIndex := rf.getLastLogIndex()
 		// Debug(rf, "lastLogIndex = %d, rf.nextIndex = %v, peer = %d", lastLogIndex, rf.nextIndex, peer)
+		prevLogIndex = rf.nextIndex[peer] - 1 // XXX: Why not via len(log) ?
+		prevLogTerm = rf.log[prevLogIndex].Term
 		if lastLogIndex > 0 && lastLogIndex >= rf.nextIndex[peer] {
-			prevLogIndex = rf.nextIndex[peer] - 1 // XXX: Why not via len(log) ?
-			prevLogTerm = rf.log[prevLogIndex].Term
 			entries = rf.log[rf.nextIndex[peer]:]
 		} else {
-			prevLogIndex = -1
-			prevLogTerm = -1
 			entries = nil
 		}
 		go rf.sendAEToPeer(peer, me, currentTerm, prevLogIndex, prevLogTerm, entries, leaderCommit)
