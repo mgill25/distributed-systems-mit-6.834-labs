@@ -43,3 +43,16 @@ b7:
 	$(raft_test) TestBackup2B
 append:
 	$(raft_test) 2B
+
+# Persistence
+call:
+	$(raft_test) 2C
+
+unrel:
+	$(raft_test) TestFigure8Unreliable2C
+
+rchurn:
+	$(raft_test) TestReliableChurn2C
+
+uchurn:
+	$(raft_test) TestUnreliableChurn2C

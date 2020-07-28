@@ -18,12 +18,16 @@ package raft
 //
 
 import (
+	"bytes"
+	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"../labgob"
 	"../labrpc"
 )
 
@@ -113,15 +117,31 @@ func (rf *Raft) GetState() (int, bool) {
 // where it can later be retrieved after a crash and restart.
 // see paper's Figure 2 for a description of what should be persistent.
 //
+
+// TODO: Can we avoid using this?
+type PersistedState struct {
+	CurrentTerm int
+	VotedFor    int
+	Log         []LogEntry
+}
+
+// XXX: Caution: call site must already have the lock
 func (rf *Raft) persist() {
 	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	buffer := new(bytes.Buffer)
+	encoder := labgob.NewEncoder(buffer)
+
+	// encode(send) some values
+	err := encoder.Encode(PersistedState{
+		CurrentTerm: rf.currentTerm,
+		VotedFor:    rf.votedFor,
+		Log:         rf.log,
+	})
+	if err != nil {
+		log.Fatal("encoding error: ", err)
+	}
+	encodedData := buffer.Bytes()
+	rf.persister.SaveRaftState(encodedData)
 }
 
 //
@@ -131,19 +151,24 @@ func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
-	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+
+	// Throw the data into a buffer and then decode it
+	buffer := bytes.NewBuffer(data)
+	decoder := labgob.NewDecoder(buffer)
+	var pState PersistedState
+	err := decoder.Decode(&pState)
+	if err != nil {
+		log.Fatal("Decoding Error: ", err)
+		rf.currentTerm = 0
+		rf.votedFor = -1
+		rf.log = []LogEntry{}
+		rf.log = append(rf.log, LogEntry{Term: 0, Command: nil}) // To make "real" entries start from 1
+	} else {
+		rf.votedFor = pState.VotedFor
+		rf.log = pState.Log
+		rf.currentTerm = pState.CurrentTerm
+	}
+	fmt.Printf("[RAFT] read state: %v\n", pState)
 }
 
 //
@@ -173,6 +198,7 @@ func (rf *Raft) convertToFollower(newTerm int) {
 	rf.currentTerm = newTerm
 	rf.state = Follower
 	rf.votedFor = -1
+	rf.persist()
 }
 
 // RequestVote RPC handler.
@@ -200,6 +226,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			<-rf.timer.C
 		}
 		rf.timer.Reset(electionTimeout)
+		rf.persist()
 	} else {
 		reply.VoteGranted = false
 	}
@@ -276,6 +303,7 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 				// Delete the conflict index and everything after it.
 				rf.log = rf.log[:conflictIndex]
 				Warn(rf, "Conflicting entries deleted from %d", conflictIndex)
+				rf.persist()
 			}
 			// As per spec: Append any new Entries not already in the Log!
 			// Detect if there are same entries in the log as args.Entries
@@ -290,7 +318,7 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 				}
 			}
 			rf.log = append(rf.log, toAppend...)
-
+			rf.persist()
 		}
 
 		if args.LeaderCommit > rf.commitIndex {
@@ -321,6 +349,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:    term,
 	}
 	rf.log = append(rf.log, entry)
+	rf.persist()
 	return newEntryIndex, term, isLeader
 }
 
@@ -338,7 +367,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
-	Error(rf, "killed")
 }
 
 func (rf *Raft) killed() bool {
@@ -372,7 +400,7 @@ func (rf *Raft) runElection() {
 				votes = 0
 				rf.initIndexMaps()
 				rf.mu.Unlock()
-				Info(rf, "Won Election")
+				// Info(rf, "Won Election")
 				rf.launchHeartbeats()
 			}
 		case <-rf.timer.C:
@@ -380,6 +408,7 @@ func (rf *Raft) runElection() {
 			rf.state = Candidate
 			rf.currentTerm += 1
 			rf.votedFor = me
+			rf.persist()
 			rand.Seed(time.Now().UTC().UnixNano() * int64(me) * int64(pid))
 			electionTimeout := time.Millisecond * time.Duration(rand.Intn(500)+500)
 			rf.timer.Reset(electionTimeout)
@@ -536,9 +565,6 @@ func (rf *Raft) updateCommitIndex() {
 			}
 			if count == majorityRequired {
 				rf.commitIndex = j
-				if (rf.commitIndex >= 50 && rf.commitIndex <= 55) || rf.commitIndex >= 100 {
-					Info(rf, "Replicated to majority. commitIndex = %d, last log idx = %d", rf.commitIndex, rf.getLastLogIndex())
-				}
 				break
 			}
 		}

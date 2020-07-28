@@ -26,7 +26,7 @@ cd src/raft
 
 for i in {1..100}; do
         echo "[INFO] Test Run $i"
-        go test -race -run $b3 1>$logFile 2>&1
+        go test -race -run $b7 1>$logFile 2>&1
         if [[ $? -ne 0 ]]; then
                 echo "[ERROR] Test case failed. Exiting..."
                 break

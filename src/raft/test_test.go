@@ -806,6 +806,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 	cfg.begin("Test (2C): Figure 8 (unreliable)")
 
+	fmt.Printf("[TEST]: Adding one\n")
 	cfg.one(rand.Int()%10000, 1, true)
 
 	nup := servers
@@ -843,12 +844,15 @@ func TestFigure8Unreliable2C(t *testing.T) {
 		}
 	}
 
+	fmt.Printf("[TEST]: 1000 iterations done\n")
+
 	for i := 0; i < servers; i++ {
 		if cfg.connected[i] == false {
 			cfg.connect(i)
 		}
 	}
 
+	fmt.Printf("[TEST]: All connected. Adding one\n")
 	cfg.one(rand.Int()%10000, servers, true)
 
 	cfg.end()
