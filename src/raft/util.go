@@ -17,7 +17,7 @@ func (rf *Raft) sendAppendEntry(server int, args *AppendEntryArgs, reply *Append
 }
 
 // Debugging
-const DebugMode = 3
+const DebugMode = 2
 
 /*
 	Debug = 3

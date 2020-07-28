@@ -224,6 +224,12 @@ type AppendEntryArgs struct {
 type AppendEntryReply struct {
 	Term    int
 	Success bool
+	// Optimization:
+	// when rejecting an appendEntry, the follower can include the term of the conflicting
+	// entry and the first index it stores for that term. With this information,
+	// the leader can decrement nextIndex to bypass all of the conflicting entries in that term
+	ConflictIndex int
+	ConflictTerm  int
 }
 
 func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
@@ -232,10 +238,8 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	pid := os.Getpid()
 	rand.Seed(time.Now().UTC().UnixNano() * int64(rf.me) * int64(pid))
 	electionTimeout := time.Millisecond * time.Duration(rand.Intn(500)+500)
-	// Debug(rf, "AE args = %+v\n", args)
 	reply.Term = rf.currentTerm
 	if args.Term < rf.currentTerm {
-		Error(rf, "Rejecting AE: Incoming Term %d < my current Term %d", args.Term, rf.currentTerm)
 		reply.Success = false
 		return
 	} else if args.Term >= rf.currentTerm {
@@ -244,19 +248,17 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 			<-rf.timer.C
 		}
 		rf.timer.Reset(electionTimeout)
-
 		// Debug(rf, "args.PrevLogIndex = %d, len(log) = %d", args.PrevLogIndex, len(rf.log))
 		if args.PrevLogIndex >= len(rf.log) {
 			reply.Success = false
 			return
 		}
 		if args.PrevLogIndex > 0 && rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
-			Error(rf, "Rejecting AE. Log Matching Property Fail")
+			Debug(rf, "Rejecting AE. Log Matching Property Fail")
 			reply.Success = false
 			return
 		}
 
-		var overWritten bool
 		if args.Entries != nil {
 			conflictIndex := -1
 			// Loop through the entries and check for Index at each location in log
@@ -274,34 +276,29 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 				// Delete the conflict index and everything after it.
 				rf.log = rf.log[:conflictIndex]
 				Warn(rf, "Conflicting entries deleted from %d", conflictIndex)
-				overWritten = true
-			} else {
-				// As per spec: Append any new Entries not already in the Log!
-				// Detect if there are same entries in the log as args.Entries
-				// and if yes, ignore them
-				toAppend := []LogEntry{}
-				for i := 0; i < len(args.Entries); i++ {
-					entry := args.Entries[i]
-					logIdx := entry.Index
-					logTrm := entry.Term
-					if len(rf.log) <= logIdx || rf.log[logIdx].Term != logTrm {
-						toAppend = append(toAppend, entry)
-					} else {
-						Warn(rf, "Duplicate detected and ignored: %+v", entry)
-					}
-				}
-				rf.log = append(rf.log, toAppend...)
 			}
+			// As per spec: Append any new Entries not already in the Log!
+			// Detect if there are same entries in the log as args.Entries
+			// and if yes, ignore them
+			toAppend := []LogEntry{}
+			for i := 0; i < len(args.Entries); i++ {
+				entry := args.Entries[i]
+				logIdx := entry.Index
+				logTrm := entry.Term
+				if len(rf.log) <= logIdx || rf.log[logIdx].Term != logTrm {
+					toAppend = append(toAppend, entry)
+				}
+			}
+			rf.log = append(rf.log, toAppend...)
 
 		}
 
 		if args.LeaderCommit > rf.commitIndex {
 			rf.commitIndex = Min(args.LeaderCommit, rf.getLastLogIndex())
-			Warn(rf, "commitIndex updated = %d. min(%d, %d)", rf.commitIndex, args.LeaderCommit, rf.getLastLogIndex())
 		}
 
 		rf.applyLogEntries(args.Entries)
-		reply.Success = !overWritten
+		reply.Success = true
 	}
 	// log.Printf("node[%d] Resetting timeout to %v at %v\n", rf.me, electionTimeout, time.Now())
 }
@@ -324,7 +321,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Term:    term,
 	}
 	rf.log = append(rf.log, entry)
-	Info(rf, "New entry appended: %+v", entry)
 	return newEntryIndex, term, isLeader
 }
 
@@ -342,6 +338,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
+	Error(rf, "killed")
 }
 
 func (rf *Raft) killed() bool {
@@ -374,8 +371,8 @@ func (rf *Raft) runElection() {
 				rf.state = Leader
 				votes = 0
 				rf.initIndexMaps()
-				Info(rf, "Won election, nextIndex = %v", rf.nextIndex)
 				rf.mu.Unlock()
+				Info(rf, "Won Election")
 				rf.launchHeartbeats()
 			}
 		case <-rf.timer.C:
@@ -387,7 +384,6 @@ func (rf *Raft) runElection() {
 			electionTimeout := time.Millisecond * time.Duration(rand.Intn(500)+500)
 			rf.timer.Reset(electionTimeout)
 			currentTerm := rf.currentTerm
-			Warn(rf, "Election has been started")
 			rf.mu.Unlock()
 			for peer := range rf.peers {
 				if peer == me {
@@ -506,7 +502,6 @@ func (rf *Raft) applyLogEntries(entries []LogEntry) {
 				CommandValid: true,
 				CommandIndex: entry.Index,
 			}
-			Info(rf, "Applied %+v", msg)
 			rf.applyCh <- msg
 		} else {
 			break
@@ -541,6 +536,9 @@ func (rf *Raft) updateCommitIndex() {
 			}
 			if count == majorityRequired {
 				rf.commitIndex = j
+				if (rf.commitIndex >= 50 && rf.commitIndex <= 55) || rf.commitIndex >= 100 {
+					Info(rf, "Replicated to majority. commitIndex = %d, last log idx = %d", rf.commitIndex, rf.getLastLogIndex())
+				}
 				break
 			}
 		}
